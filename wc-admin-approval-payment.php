@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
- * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با استفاده از وضعیت‌های پیش‌فرض ووکامرس
- * Version: 3.0.0
+ * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس - الهام گرفته از WooCommerce Order Approval
+ * Version: 3.1.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -59,9 +59,14 @@ class WC_Admin_Approval_Payment {
         add_action('woocommerce_product_options_general_product_data', array($this, 'add_admin_approval_field'));
         add_action('woocommerce_process_product_meta', array($this, 'save_admin_approval_field'));
 
-        // مدیریت فرآیند پرداخت
-        add_action('woocommerce_checkout_order_processed', array($this, 'handle_checkout_process'), 10, 3);
-        add_filter('woocommerce_payment_successful_result', array($this, 'modify_payment_result'), 10, 2);
+        // مدیریت وضعیت سفارش جدید - اینجا مهم است!
+        add_action('woocommerce_checkout_update_order_meta', array($this, 'set_order_awaiting_approval'), 10, 2);
+
+        // جلوگیری از تغییر خودکار وضعیت
+        add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
+
+        // تغییر redirect بعد از checkout
+        add_filter('woocommerce_get_checkout_order_received_url', array($this, 'custom_redirect_after_purchase'), 10, 2);
 
         // صفحه انتظار تایید
         add_action('init', array($this, 'register_pending_approval_endpoint'));
@@ -126,9 +131,15 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * مدیریت فرآیند checkout
+     * تنظیم وضعیت سفارش به "در حال بررسی" - مهم‌ترین بخش!
      */
-    public function handle_checkout_process($order_id, $posted_data, $order) {
+    public function set_order_awaiting_approval($order_id, $data) {
+        $order = wc_get_order($order_id);
+
+        if (!$order) {
+            return;
+        }
+
         $needs_approval = false;
 
         // بررسی آیتم‌های سفارش
@@ -144,34 +155,40 @@ class WC_Admin_Approval_Payment {
         }
 
         if ($needs_approval) {
+            // ذخیره اطلاعات
             update_post_meta($order_id, '_requires_admin_approval', 'yes');
             update_post_meta($order_id, '_approval_request_time', current_time('mysql'));
 
-            // تغییر وضعیت سفارش به "در حال بررسی"
-            $order->update_status('on-hold', 'سفارش در انتظار تایید مدیر است.');
+            // تغییر وضعیت به "در حال بررسی" - FORCE!
+            $order->update_status('on-hold', 'سفارش در انتظار تایید مدیر است.', true);
         }
     }
 
     /**
-     * تغییر نتیجه پرداخت
+     * جلوگیری از تغییر خودکار وضعیت به completed
      */
-    public function modify_payment_result($result, $order_id) {
+    public function prevent_auto_complete($status, $order_id, $order) {
         $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
 
         if ($requires_approval === 'yes') {
-            $order = wc_get_order($order_id);
-            $status = $order->get_status();
-
-            // اگر در حال بررسی است
-            if ($status === 'on-hold') {
-                $result = array(
-                    'result' => 'success',
-                    'redirect' => home_url('/pending-approval/?order_id=' . $order_id . '&key=' . $order->get_order_key())
-                );
-            }
+            // اگر هنوز تایید نشده، وضعیت را به on-hold نگه دار
+            return 'on-hold';
         }
 
-        return $result;
+        return $status;
+    }
+
+    /**
+     * تغییر redirect بعد از خرید
+     */
+    public function custom_redirect_after_purchase($url, $order) {
+        $requires_approval = get_post_meta($order->get_id(), '_requires_admin_approval', true);
+
+        if ($requires_approval === 'yes') {
+            $url = home_url('/pending-approval/?order_id=' . $order->get_id() . '&key=' . $order->get_order_key());
+        }
+
+        return $url;
     }
 
     /**
@@ -345,7 +362,7 @@ class WC_Admin_Approval_Payment {
                 <div class="approval-status pending">
                     <div class="icon">⏳</div>
                     <h2>در حال بررسی سفارش</h2>
-                    <p>سفارش شما ثبت شده و در حال بررسی توسط مدیریت است.</p>
+                    <p>سفارش شما با موفقیت ثبت شد و در حال بررسی توسط مدیریت است.</p>
                     <p>لطفاً صبور باشید، پس از تایید مدیر می‌توانید پرداخت را انجام دهید.</p>
                     <div class="spinner"></div>
                     <p style="font-size: 14px; color: #666;">این صفحه به صورت خودکار بروزرسانی می‌شود...</p>
