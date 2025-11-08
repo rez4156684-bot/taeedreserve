@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 4.4.0
+ * Version: 4.5.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -174,8 +174,8 @@ class WC_Admin_Approval_Payment {
         // جلوگیری از تغییر خودکار وضعیت
         add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
 
-        // تغییر redirect بعد از checkout - استفاده از woocommerce_thankyou
-        add_action('woocommerce_thankyou', array($this, 'redirect_to_approval_page'), 1);
+        // نمایش محتوای سفارشی در صفحه thankyou
+        add_action('woocommerce_thankyou', array($this, 'display_approval_status_on_thankyou'), 1);
 
         // صفحه انتظار تایید
         add_action('init', array($this, 'register_pending_approval_endpoint'), 20);
@@ -426,10 +426,9 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * Redirect به صفحه پرداخت‌های در انتظار بعد از checkout
-     * این در woocommerce_thankyou اجرا می‌شود که مطمئناً بعد از save order است
+     * نمایش وضعیت تایید در صفحه thankyou
      */
-    public function redirect_to_approval_page($order_id) {
+    public function display_approval_status_on_thankyou($order_id) {
         if (!$order_id) {
             return;
         }
@@ -442,21 +441,190 @@ class WC_Admin_Approval_Payment {
         // بررسی نیاز به تایید
         $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
 
-        if ($requires_approval === 'yes' && $order->get_status() === 'awaiting-approval') {
-            // Redirect به صفحه pending-payments در پنل کاربری
-            $redirect_url = wc_get_account_endpoint_url('pending-payments');
-
-            // JavaScript redirect - قابل اطمینان‌ترین روش در این مرحله
-            ?>
-            <script type="text/javascript">
-                window.location.replace('<?php echo esc_js($redirect_url); ?>');
-            </script>
-            <noscript>
-                <meta http-equiv="refresh" content="0;url=<?php echo esc_url($redirect_url); ?>">
-            </noscript>
-            <?php
-            exit;
+        if ($requires_approval !== 'yes') {
+            return; // سفارش عادی - همان thankyou page معمولی
         }
+
+        // سفارش نیاز به تایید دارد - نمایش محتوای سفارشی
+        $order_status = $order->get_status();
+
+        ?>
+        <style>
+            .woocommerce-order {
+                display: none !important;
+            }
+            .approval-status-box {
+                max-width: 800px;
+                margin: 40px auto;
+                padding: 40px;
+                background: #fff;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                text-align: center;
+            }
+            .approval-status-box.awaiting {
+                border: 3px solid #ffc107;
+                background: #fffbf0;
+            }
+            .approval-status-box.approved {
+                border: 3px solid #28a745;
+                background: #f0fff4;
+            }
+            .approval-icon {
+                font-size: 80px;
+                margin-bottom: 20px;
+            }
+            .approval-title {
+                font-size: 28px;
+                font-weight: bold;
+                margin-bottom: 15px;
+                color: #333;
+            }
+            .approval-message {
+                font-size: 16px;
+                color: #666;
+                margin-bottom: 30px;
+                line-height: 1.8;
+            }
+            .approval-spinner {
+                display: inline-block;
+                width: 50px;
+                height: 50px;
+                border: 5px solid #f3f3f3;
+                border-top: 5px solid #ffc107;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin: 20px 0;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            .payment-button-large {
+                display: inline-block;
+                background: #28a745;
+                color: #fff !important;
+                padding: 20px 50px;
+                font-size: 20px;
+                font-weight: bold;
+                border-radius: 8px;
+                text-decoration: none;
+                margin-top: 20px;
+                transition: all 0.3s;
+                border: none;
+                cursor: pointer;
+            }
+            .payment-button-large:hover {
+                background: #218838;
+                transform: scale(1.05);
+                box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+            }
+            .order-details-box {
+                margin-top: 40px;
+                padding: 25px;
+                background: #f9f9f9;
+                border-radius: 8px;
+                text-align: right;
+            }
+            .order-details-title {
+                font-size: 20px;
+                font-weight: bold;
+                margin-bottom: 20px;
+                color: #333;
+                text-align: center;
+            }
+            .order-item {
+                display: flex;
+                justify-content: space-between;
+                padding: 12px 0;
+                border-bottom: 1px solid #ddd;
+            }
+            .order-item:last-child {
+                border-bottom: none;
+                font-weight: bold;
+                font-size: 18px;
+                margin-top: 10px;
+            }
+            .refresh-note {
+                margin-top: 30px;
+                font-size: 14px;
+                color: #999;
+            }
+        </style>
+
+        <?php if ($order_status === 'awaiting-approval'): ?>
+            <div class="approval-status-box awaiting">
+                <div class="approval-icon">⏳</div>
+                <h2 class="approval-title">سفارش شما در حال بررسی است</h2>
+                <p class="approval-message">
+                    سفارش شما با موفقیت ثبت شد و هم‌اکنون در دست بررسی مدیریت قرار دارد.<br>
+                    لطفاً کمی صبر کنید، پس از تایید مدیریت می‌توانید نسبت به پرداخت اقدام کنید.
+                </p>
+                <div class="approval-spinner"></div>
+                <p class="refresh-note">
+                    این صفحه هر 5 ثانیه به صورت خودکار بروزرسانی می‌شود
+                </p>
+
+                <div class="order-details-box">
+                    <h3 class="order-details-title">جزئیات سفارش #<?php echo $order->get_order_number(); ?></h3>
+                    <?php foreach ($order->get_items() as $item): ?>
+                        <div class="order-item">
+                            <span><?php echo $item->get_name(); ?> × <?php echo $item->get_quantity(); ?></span>
+                            <span><?php echo wc_price($item->get_total()); ?></span>
+                        </div>
+                    <?php endforeach; ?>
+                    <div class="order-item">
+                        <span>جمع کل:</span>
+                        <span><?php echo wc_price($order->get_total()); ?></span>
+                    </div>
+                </div>
+            </div>
+
+            <script>
+                // Auto-refresh هر 5 ثانیه
+                setTimeout(function() {
+                    location.reload();
+                }, 5000);
+            </script>
+
+        <?php elseif ($order_status === 'approved-payment'): ?>
+            <div class="approval-status-box approved">
+                <div class="approval-icon">✅</div>
+                <h2 class="approval-title">سفارش شما تایید شد!</h2>
+                <p class="approval-message">
+                    خوشخبر! سفارش شما توسط مدیریت تایید شد.<br>
+                    اکنون می‌توانید با کلیک روی دکمه زیر نسبت به پرداخت سفارش خود اقدام کنید.
+                </p>
+
+                <a href="<?php echo esc_url($order->get_checkout_payment_url()); ?>" class="payment-button-large">
+                    💳 پرداخت سفارش
+                </a>
+
+                <div class="order-details-box">
+                    <h3 class="order-details-title">جزئیات سفارش #<?php echo $order->get_order_number(); ?></h3>
+                    <?php foreach ($order->get_items() as $item): ?>
+                        <div class="order-item">
+                            <span><?php echo $item->get_name(); ?> × <?php echo $item->get_quantity(); ?></span>
+                            <span><?php echo wc_price($item->get_total()); ?></span>
+                        </div>
+                    <?php endforeach; ?>
+                    <div class="order-item">
+                        <span>جمع کل:</span>
+                        <span><?php echo wc_price($order->get_total()); ?></span>
+                    </div>
+                </div>
+            </div>
+
+        <?php elseif ($order_status === 'cancelled' || $order_status === 'failed'): ?>
+            <div class="approval-status-box" style="border-color: #dc3545; background: #fff0f0;">
+                <div class="approval-icon">❌</div>
+                <h2 class="approval-title">سفارش رد شد</h2>
+                <p class="approval-message">
+                    متأسفانه سفارش شما توسط مدیریت تایید نشد.<br>
+                    برای اطلاعات بیشتر لطفاً با پشتیبانی تماس بگیرید.
+                </p>
+            </div>
+        <?php endif;
     }
 
     /**
