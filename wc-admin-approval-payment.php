@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 5.2.0
+ * Version: 5.2.1
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -233,8 +233,15 @@ class WC_Admin_Approval_Payment {
         add_action('wp_ajax_check_approval_status', array($this, 'ajax_check_approval_status'));
         add_action('wp_ajax_nopriv_check_approval_status', array($this, 'ajax_check_approval_status'));
 
-        // Shortcode برای نمایش لینک پرداخت
+        // Shortcodeهای مختلف برای نمایش لینک پرداخت
         add_shortcode('approval_payment_link', array($this, 'shortcode_payment_link'));
+        add_shortcode('payment_link', array($this, 'shortcode_payment_link'));
+        add_shortcode('order_payment_link', array($this, 'shortcode_payment_link'));
+        add_shortcode('pay_link', array($this, 'shortcode_payment_link'));
+        add_shortcode('wc_payment_link', array($this, 'shortcode_payment_link'));
+        add_shortcode('approval_pay', array($this, 'shortcode_payment_link'));
+        add_shortcode('link_pardakht', array($this, 'shortcode_payment_link'));
+        add_shortcode('pardakht', array($this, 'shortcode_payment_link'));
     }
 
     /**
