@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 4.7.0
+ * Version: 4.8.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -175,7 +175,8 @@ class WC_Admin_Approval_Payment {
         add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
 
         // رندر کامل صفحه thankyou برای سفارشات نیازمند تایید
-        add_action('template_redirect', array($this, 'render_custom_thankyou_page'), 1);
+        // استفاده از wp_loaded با priority بسیار بالا
+        add_action('wp_loaded', array($this, 'force_redirect_approval_orders'), 999);
 
         // صفحه انتظار تایید
         add_action('init', array($this, 'register_pending_approval_endpoint'), 20);
@@ -423,6 +424,32 @@ class WC_Admin_Approval_Payment {
         }
 
         return $status;
+    }
+
+    /**
+     * Redirect اجباری برای سفارشات نیازمند تایید
+     * این با priority 999 در wp_loaded اجرا می‌شود
+     */
+    public function force_redirect_approval_orders() {
+        // فقط برای صفحه order-received
+        if (!is_admin() && isset($_GET['key']) && isset($GLOBALS['wp']->query_vars['order-received'])) {
+            $order_id = absint($GLOBALS['wp']->query_vars['order-received']);
+
+            if ($order_id) {
+                $order = wc_get_order($order_id);
+
+                if ($order) {
+                    $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+
+                    if ($requires_approval === 'yes') {
+                        // redirect به صفحه pending-approval
+                        $redirect_url = home_url('/pending-approval/?order_id=' . $order_id . '&key=' . $order->get_order_key());
+                        wp_redirect($redirect_url);
+                        exit;
+                    }
+                }
+            }
+        }
     }
 
     /**
