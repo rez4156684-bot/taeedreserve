@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 4.3.0
+ * Version: 4.4.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -426,7 +426,7 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * Redirect به صفحه انتظار تایید بعد از checkout
+     * Redirect به صفحه پرداخت‌های در انتظار بعد از checkout
      * این در woocommerce_thankyou اجرا می‌شود که مطمئناً بعد از save order است
      */
     public function redirect_to_approval_page($order_id) {
@@ -443,7 +443,8 @@ class WC_Admin_Approval_Payment {
         $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
 
         if ($requires_approval === 'yes' && $order->get_status() === 'awaiting-approval') {
-            $redirect_url = home_url('/pending-approval/?order_id=' . $order_id . '&key=' . $order->get_order_key());
+            // Redirect به صفحه pending-payments در پنل کاربری
+            $redirect_url = wc_get_account_endpoint_url('pending-payments');
 
             // JavaScript redirect - قابل اطمینان‌ترین روش در این مرحله
             ?>
@@ -1132,54 +1133,230 @@ class WC_Admin_Approval_Payment {
                     'value' => 'yes',
                 ),
             ),
+            'orderby' => 'date',
+            'order' => 'DESC',
         ));
 
         if (empty($orders)) {
+            echo '<div class="woocommerce-message woocommerce-message--info">';
             echo '<p>شما هیچ سفارش در انتظار تاییدی ندارید.</p>';
+            echo '</div>';
             return;
         }
 
-        echo '<h3>سفارشات در انتظار تایید</h3>';
-        echo '<table class="shop_table my_account_orders">';
-        echo '<thead>';
-        echo '<tr>';
-        echo '<th>سفارش</th>';
-        echo '<th>تاریخ</th>';
-        echo '<th>وضعیت</th>';
-        echo '<th>مبلغ</th>';
-        echo '<th>عملیات</th>';
-        echo '</tr>';
-        echo '</thead>';
-        echo '<tbody>';
+        // نمایش سفارشات با کارت‌های زیبا
+        echo '<style>
+            .approval-cards-container {
+                display: grid;
+                gap: 20px;
+                margin: 20px 0;
+            }
+            .approval-card {
+                background: #fff;
+                border: 2px solid #ddd;
+                border-radius: 8px;
+                padding: 25px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                transition: all 0.3s;
+            }
+            .approval-card:hover {
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            }
+            .approval-card.awaiting {
+                border-color: #ffc107;
+                background: #fffbf0;
+            }
+            .approval-card.approved {
+                border-color: #28a745;
+                background: #f0fff4;
+            }
+            .approval-card.rejected {
+                border-color: #dc3545;
+                background: #fff0f0;
+            }
+            .approval-card-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 15px;
+                padding-bottom: 15px;
+                border-bottom: 2px solid #eee;
+            }
+            .approval-card-order-number {
+                font-size: 20px;
+                font-weight: bold;
+                color: #333;
+            }
+            .approval-card-status {
+                padding: 8px 16px;
+                border-radius: 20px;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            .approval-card-status.awaiting {
+                background: #ffc107;
+                color: #fff;
+            }
+            .approval-card-status.approved {
+                background: #28a745;
+                color: #fff;
+            }
+            .approval-card-status.rejected {
+                background: #dc3545;
+                color: #fff;
+            }
+            .approval-card-items {
+                margin: 15px 0;
+            }
+            .approval-card-item {
+                display: flex;
+                justify-content: space-between;
+                padding: 10px 0;
+                border-bottom: 1px solid #eee;
+            }
+            .approval-card-item:last-child {
+                border-bottom: none;
+            }
+            .approval-card-footer {
+                margin-top: 20px;
+                padding-top: 15px;
+                border-top: 2px solid #eee;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .approval-card-total {
+                font-size: 18px;
+                font-weight: bold;
+                color: #333;
+            }
+            .approval-card .button {
+                padding: 12px 30px;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            .approval-card .button.payment-button {
+                background: #28a745;
+                color: #fff;
+                border: none;
+            }
+            .approval-card .button.payment-button:hover {
+                background: #218838;
+            }
+            .approval-spinner {
+                display: inline-block;
+                width: 20px;
+                height: 20px;
+                border: 3px solid #f3f3f3;
+                border-top: 3px solid #ffc107;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin-left: 10px;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            .approval-card-info {
+                font-size: 13px;
+                color: #666;
+                margin-top: 10px;
+            }
+        </style>';
+
+        echo '<h3>سفارشات در انتظار تایید و پرداخت</h3>';
+        echo '<div class="approval-cards-container">';
+
+        $has_awaiting = false;
 
         foreach ($orders as $order) {
             $order_status = $order->get_status();
+            $order_id = $order->get_id();
 
-            $status_labels = array(
-                'awaiting-approval' => 'منتظر تایید',
-                'approved-payment' => 'تایید شده - منتظر پرداخت',
-                'cancelled' => 'رد شده',
-            );
-
-            echo '<tr>';
-            echo '<td>#' . $order->get_order_number() . '</td>';
-            echo '<td>' . WC_Persian_Date::format('Y/m/d', $order->get_date_created()->getTimestamp()) . '</td>';
-            echo '<td>' . ($status_labels[$order_status] ?? wc_get_order_status_name($order_status)) . '</td>';
-            echo '<td>' . wc_price($order->get_total()) . '</td>';
-            echo '<td>';
-
-            if ($order_status === 'approved-payment') {
-                echo '<a href="' . esc_url($order->get_checkout_payment_url()) . '" class="button">پرداخت</a>';
-            } else {
-                echo '<a href="' . esc_url(home_url('/pending-approval/?order_id=' . $order->get_id() . '&key=' . $order->get_order_key())) . '" class="button">مشاهده</a>';
+            if ($order_status === 'awaiting-approval') {
+                $has_awaiting = true;
             }
 
-            echo '</td>';
-            echo '</tr>';
+            // تعیین کلاس کارت
+            $card_class = 'approval-card';
+            $status_class = '';
+            $status_text = '';
+
+            if ($order_status === 'awaiting-approval') {
+                $card_class .= ' awaiting';
+                $status_class = 'awaiting';
+                $status_text = '⏳ منتظر تایید مدیر';
+            } elseif ($order_status === 'approved-payment') {
+                $card_class .= ' approved';
+                $status_class = 'approved';
+                $status_text = '✅ تایید شده - آماده پرداخت';
+            } elseif ($order_status === 'cancelled' || $order_status === 'failed') {
+                $card_class .= ' rejected';
+                $status_class = 'rejected';
+                $status_text = '❌ رد شده';
+            } else {
+                continue; // سفارشات کامل شده را نمایش نده
+            }
+
+            echo '<div class="' . $card_class . '">';
+
+            // Header
+            echo '<div class="approval-card-header">';
+            echo '<span class="approval-card-order-number">سفارش #' . $order->get_order_number() . '</span>';
+            echo '<span class="approval-card-status ' . $status_class . '">' . $status_text . '</span>';
+            echo '</div>';
+
+            // Items
+            echo '<div class="approval-card-items">';
+            foreach ($order->get_items() as $item) {
+                echo '<div class="approval-card-item">';
+                echo '<span>' . $item->get_name() . ' × ' . $item->get_quantity() . '</span>';
+                echo '<span>' . wc_price($item->get_total()) . '</span>';
+                echo '</div>';
+            }
+            echo '</div>';
+
+            // تاریخ
+            $request_time = get_post_meta($order_id, '_approval_request_time', true);
+            if ($request_time) {
+                echo '<div class="approval-card-info">';
+                echo '📅 تاریخ ثبت: ' . WC_Persian_Date::mysql_to_jalali($request_time, 'Y/m/d H:i');
+                echo '</div>';
+            }
+
+            // Footer
+            echo '<div class="approval-card-footer">';
+            echo '<span class="approval-card-total">جمع کل: ' . wc_price($order->get_total()) . '</span>';
+
+            if ($order_status === 'approved-payment') {
+                echo '<a href="' . esc_url($order->get_checkout_payment_url()) . '" class="button payment-button">💳 پرداخت سفارش</a>';
+            } elseif ($order_status === 'awaiting-approval') {
+                echo '<span style="color: #666; font-size: 14px;"><span class="approval-spinner"></span> در حال بررسی...</span>';
+            } else {
+                echo '<span style="color: #999;">سفارش رد شده</span>';
+            }
+
+            echo '</div>';
+
+            echo '</div>'; // end approval-card
         }
 
-        echo '</tbody>';
-        echo '</table>';
+        echo '</div>'; // end approval-cards-container
+
+        // Auto-refresh برای سفارشات در انتظار
+        if ($has_awaiting) {
+            ?>
+            <script>
+                // بارگذاری مجدد صفحه هر 10 ثانیه برای بررسی تایید
+                setInterval(function() {
+                    location.reload();
+                }, 10000);
+            </script>
+            <div class="woocommerce-message woocommerce-message--info" style="margin-top: 20px;">
+                <p>این صفحه هر 10 ثانیه به صورت خودکار بروزرسانی می‌شود تا وضعیت سفارش شما بررسی شود.</p>
+            </div>
+            <?php
+        }
     }
 
     /**
