@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 4.9.0
+ * Version: 5.0.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -174,9 +174,8 @@ class WC_Admin_Approval_Payment {
         // جلوگیری از تغییر خودکار وضعیت
         add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
 
-        // رندر کامل صفحه thankyou برای سفارشات نیازمند تایید
-        // استفاده از wp_loaded با priority بسیار بالا
-        add_action('wp_loaded', array($this, 'force_redirect_approval_orders'), 999);
+        // نمایش اجباری لینک پرداخت در صفحه thankyou
+        add_action('woocommerce_thankyou', array($this, 'show_payment_link_always'), 5);
 
         // صفحه انتظار تایید
         add_action('init', array($this, 'register_pending_approval_endpoint'), 20);
@@ -427,29 +426,103 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * Redirect اجباری برای سفارشات نیازمند تایید
-     * این با priority 999 در wp_loaded اجرا می‌شود
+     * نمایش لینک پرداخت همیشه در صفحه thankyou
      */
-    public function force_redirect_approval_orders() {
-        // فقط برای صفحه order-received
-        if (!is_admin() && isset($_GET['key']) && isset($GLOBALS['wp']->query_vars['order-received'])) {
-            $order_id = absint($GLOBALS['wp']->query_vars['order-received']);
-
-            if ($order_id) {
-                $order = wc_get_order($order_id);
-
-                if ($order) {
-                    $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
-
-                    if ($requires_approval === 'yes') {
-                        // redirect به صفحه pending-approval
-                        $redirect_url = home_url('/pending-approval/?order_id=' . $order_id . '&key=' . $order->get_order_key());
-                        wp_redirect($redirect_url);
-                        exit;
-                    }
-                }
-            }
+    public function show_payment_link_always($order_id) {
+        if (!$order_id) {
+            return;
         }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
+
+        // چک کنیم سفارش نیاز به تایید داره؟
+        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+
+        if ($requires_approval !== 'yes') {
+            return; // سفارش عادی
+        }
+
+        $order_status = $order->get_status();
+        $payment_url = $order->get_checkout_payment_url();
+
+        ?>
+        <style>
+            .wc-approval-payment-box {
+                background: #f0f8ff;
+                border: 3px solid #2196F3;
+                border-radius: 10px;
+                padding: 30px;
+                margin: 30px 0;
+                text-align: center;
+            }
+            .wc-approval-payment-box h2 {
+                color: #2196F3;
+                margin-top: 0;
+            }
+            .wc-approval-payment-button {
+                display: inline-block;
+                background: #28a745;
+                color: #fff !important;
+                padding: 15px 40px;
+                font-size: 18px;
+                font-weight: bold;
+                text-decoration: none;
+                border-radius: 5px;
+                margin: 15px 0;
+            }
+            .wc-approval-payment-button:hover {
+                background: #218838;
+                color: #fff !important;
+            }
+            .wc-approval-payment-link {
+                display: block;
+                background: #fff;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 15px 0;
+                word-break: break-all;
+                font-size: 14px;
+                border: 1px solid #ddd;
+            }
+        </style>
+
+        <div class="wc-approval-payment-box">
+            <?php if ($order_status === 'awaiting-approval'): ?>
+                <h2>⏳ سفارش شما در حال بررسی است</h2>
+                <p>سفارش شما توسط مدیریت در حال بررسی است. پس از تایید، می‌توانید پرداخت کنید.</p>
+                <p><a href="<?php echo wc_get_account_endpoint_url('pending-payments'); ?>" class="button">مشاهده در پنل کاربری</a></p>
+
+            <?php elseif ($order_status === 'approved-payment'): ?>
+                <h2>✅ سفارش شما تایید شد!</h2>
+                <p>می‌توانید با کلیک روی دکمه زیر پرداخت کنید:</p>
+                <p>
+                    <a href="<?php echo esc_url($payment_url); ?>" class="wc-approval-payment-button">
+                        💳 پرداخت سفارش
+                    </a>
+                </p>
+                <p><strong>لینک پرداخت:</strong></p>
+                <div class="wc-approval-payment-link">
+                    <?php echo esc_url($payment_url); ?>
+                </div>
+
+            <?php else: ?>
+                <h2>وضعیت: <?php echo wc_get_order_status_name($order_status); ?></h2>
+                <p><strong>لینک پرداخت:</strong></p>
+                <div class="wc-approval-payment-link">
+                    <?php echo esc_url($payment_url); ?>
+                </div>
+                <p>
+                    <a href="<?php echo esc_url($payment_url); ?>" class="wc-approval-payment-button">
+                        💳 پرداخت سفارش
+                    </a>
+                </p>
+                <p><a href="<?php echo wc_get_account_endpoint_url('pending-payments'); ?>" class="button">مشاهده در پنل کاربری</a></p>
+            <?php endif; ?>
+        </div>
+        <?php
     }
 
     /**
