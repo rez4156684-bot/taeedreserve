@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 4.1.0
+ * Version: 4.2.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -77,10 +77,8 @@ class WC_Admin_Approval_Payment {
         // جلوگیری از تغییر خودکار وضعیت
         add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
 
-        // تغییر redirect بعد از checkout - چند هوک برای اطمینان
-        add_filter('woocommerce_get_checkout_order_received_url', array($this, 'custom_redirect_after_purchase'), 10, 2);
-        add_action('template_redirect', array($this, 'force_redirect_to_approval_page'), 5);
-        add_action('wp_footer', array($this, 'add_redirect_script'));
+        // تغییر redirect بعد از checkout - استفاده از woocommerce_thankyou
+        add_action('woocommerce_thankyou', array($this, 'redirect_to_approval_page'), 1);
 
         // صفحه انتظار تایید
         add_action('init', array($this, 'register_pending_approval_endpoint'), 20);
@@ -118,10 +116,15 @@ class WC_Admin_Approval_Payment {
         // اضافه کردن placeholder برای افزونه‌های پیامکی
         add_filter('woocommerce_email_order_meta_fields', array($this, 'add_email_order_meta'), 10, 3);
 
-        // پشتیبانی از افزونه‌های پیامکی مختلف
-        add_filter('wc_parsgreen_sms_text', array($this, 'add_payment_link_to_sms'), 10, 3);
-        add_filter('woocommerce_sms_text', array($this, 'add_payment_link_to_sms'), 10, 3);
-        add_filter('wp_sms_text_content', array($this, 'add_payment_link_to_sms'), 10, 3);
+        // پشتیبانی از افزونه‌های پیامکی مختلف - همه فیلترهای ممکن
+        add_filter('woocommerce_order_status_changed', array($this, 'set_sms_global_order'), 10, 4);
+
+        // فیلترهای متن پیامک برای افزونه‌های مختلف
+        add_filter('wc_parsgreen_sms_text', array($this, 'replace_sms_placeholders'), 999, 2);
+        add_filter('woocommerce_sms_text', array($this, 'replace_sms_placeholders'), 999, 2);
+        add_filter('wp_sms_text_content', array($this, 'replace_sms_placeholders'), 999, 2);
+        add_filter('woocommerce_sms_message', array($this, 'replace_sms_placeholders'), 999, 2);
+        add_filter('wc_sms_message', array($this, 'replace_sms_placeholders'), 999, 2);
     }
 
     /**
@@ -326,38 +329,15 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * تغییر redirect بعد از خرید
+     * Redirect به صفحه انتظار تایید بعد از checkout
+     * این در woocommerce_thankyou اجرا می‌شود که مطمئناً بعد از save order است
      */
-    public function custom_redirect_after_purchase($url, $order) {
-        $requires_approval = get_post_meta($order->get_id(), '_requires_admin_approval', true);
-
-        if ($requires_approval === 'yes') {
-            $url = home_url('/pending-approval/?order_id=' . $order->get_id() . '&key=' . $order->get_order_key());
-        }
-
-        return $url;
-    }
-
-    /**
-     * Redirect اجباری به صفحه انتظار تایید - اولویت بالا
-     */
-    public function force_redirect_to_approval_page() {
-        // فقط در صفحه order-received اجرا شود
-        if (!is_wc_endpoint_url('order-received')) {
-            return;
-        }
-
-        global $wp;
-
-        // دریافت order_id از URL
-        $order_id = isset($wp->query_vars['order-received']) ? absint($wp->query_vars['order-received']) : 0;
-
+    public function redirect_to_approval_page($order_id) {
         if (!$order_id) {
             return;
         }
 
         $order = wc_get_order($order_id);
-
         if (!$order) {
             return;
         }
@@ -367,40 +347,17 @@ class WC_Admin_Approval_Payment {
 
         if ($requires_approval === 'yes' && $order->get_status() === 'awaiting-approval') {
             $redirect_url = home_url('/pending-approval/?order_id=' . $order_id . '&key=' . $order->get_order_key());
-            wp_redirect($redirect_url);
-            exit;
-        }
-    }
 
-    /**
-     * اضافه کردن JavaScript redirect به عنوان backup
-     */
-    public function add_redirect_script() {
-        if (!is_wc_endpoint_url('order-received')) {
-            return;
-        }
-
-        global $wp;
-        $order_id = isset($wp->query_vars['order-received']) ? absint($wp->query_vars['order-received']) : 0;
-
-        if (!$order_id) {
-            return;
-        }
-
-        $order = wc_get_order($order_id);
-        if (!$order) {
-            return;
-        }
-
-        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
-
-        if ($requires_approval === 'yes' && $order->get_status() === 'awaiting-approval') {
-            $redirect_url = home_url('/pending-approval/?order_id=' . $order_id . '&key=' . $order->get_order_key());
+            // JavaScript redirect - قابل اطمینان‌ترین روش در این مرحله
             ?>
             <script type="text/javascript">
-                window.location.href = '<?php echo esc_js($redirect_url); ?>';
+                window.location.replace('<?php echo esc_js($redirect_url); ?>');
             </script>
+            <noscript>
+                <meta http-equiv="refresh" content="0;url=<?php echo esc_url($redirect_url); ?>">
+            </noscript>
             <?php
+            exit;
         }
     }
 
@@ -410,9 +367,9 @@ class WC_Admin_Approval_Payment {
     public function register_pending_approval_endpoint() {
         add_rewrite_rule('^pending-approval/?', 'index.php?pending_approval=1', 'top');
 
-        if (!get_option('wc_admin_approval_flushed_v4')) {
+        if (!get_option('wc_admin_approval_flushed_v42')) {
             flush_rewrite_rules();
-            update_option('wc_admin_approval_flushed_v4', 1);
+            update_option('wc_admin_approval_flushed_v42', 1);
         }
     }
 
@@ -697,36 +654,70 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * اضافه کردن لینک پرداخت به متن پیامک
-     * این تابع با افزونه‌های مختلف پیامکی کار می‌کند
+     * ذخیره order در global برای استفاده در فیلترهای SMS
      */
-    public function add_payment_link_to_sms($text, $order_id = null, $status = null) {
-        // اگر order_id نداریم، سعی می‌کنیم از global بگیریم
-        if (!$order_id && isset($GLOBALS['wc_order_id'])) {
-            $order_id = $GLOBALS['wc_order_id'];
+    public function set_sms_global_order($order_id, $old_status, $new_status, $order) {
+        // فقط برای وضعیت تایید شده
+        if ($new_status === 'approved-payment') {
+            $GLOBALS['wc_approval_current_order'] = $order;
+            $GLOBALS['wc_approval_current_order_id'] = $order_id;
+        }
+    }
+
+    /**
+     * جایگزینی placeholders در متن پیامک
+     * این تابع با تمام افزونه‌های پیامکی کار می‌کند
+     */
+    public function replace_sms_placeholders($text, $order = null) {
+        // ابتدا سعی می‌کنیم order را پیدا کنیم
+        $order_to_use = null;
+
+        // اگر order مستقیماً پاس شده
+        if ($order && is_a($order, 'WC_Order')) {
+            $order_to_use = $order;
+        }
+        // اگر order یک order_id است
+        elseif ($order && is_numeric($order)) {
+            $order_to_use = wc_get_order($order);
+        }
+        // از global بگیریم
+        elseif (isset($GLOBALS['wc_approval_current_order'])) {
+            $order_to_use = $GLOBALS['wc_approval_current_order'];
+        }
+        elseif (isset($GLOBALS['wc_approval_current_order_id'])) {
+            $order_to_use = wc_get_order($GLOBALS['wc_approval_current_order_id']);
         }
 
-        if (!$order_id) {
+        // اگر هیچ order نداریم، متن را بدون تغییر برگردانیم
+        if (!$order_to_use) {
             return $text;
         }
 
-        $order = wc_get_order($order_id);
-
-        if (!$order) {
-            return $text;
-        }
-
+        $order_id = $order_to_use->get_id();
         $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
 
         // فقط برای سفارشات تایید شده
-        if ($requires_approval === 'yes' && $order->get_status() === 'approved-payment') {
-            $payment_url = $order->get_checkout_payment_url();
+        if ($requires_approval === 'yes' && $order_to_use->get_status() === 'approved-payment') {
+            $payment_url = $order_to_use->get_checkout_payment_url();
 
-            // جایگزینی placeholder های مختلف
-            $text = str_replace('{payment_link}', $payment_url, $text);
-            $text = str_replace('{order_pay_url}', $payment_url, $text);
-            $text = str_replace('[payment_link]', $payment_url, $text);
-            $text = str_replace('%payment_link%', $payment_url, $text);
+            // جایگزینی placeholder های مختلف - همه فرمت‌های ممکن
+            $placeholders = array(
+                '{payment_link}',
+                '{order_pay_url}',
+                '{pay_link}',
+                '{pay_url}',
+                '[payment_link]',
+                '[order_pay_url]',
+                '[pay_link]',
+                '%payment_link%',
+                '%order_pay_url%',
+                '{{payment_link}}',
+                '{{order_pay_url}}',
+            );
+
+            foreach ($placeholders as $placeholder) {
+                $text = str_replace($placeholder, $payment_url, $text);
+            }
         }
 
         return $text;
@@ -890,26 +881,30 @@ class WC_Admin_Approval_Payment {
             <?php if (!empty($orders)): ?>
             <div style="margin-top: 20px; padding: 15px; background: #f0f8ff; border-right: 4px solid #2196F3; direction: rtl;">
                 <h3 style="margin-top: 0;">💡 راهنمای استفاده از لینک پرداخت در پیامک</h3>
-                <p>برای ارسال لینک پرداخت در پیامک‌های وضعیت <strong>"تایید شده - منتظر پرداخت"</strong>، می‌توانید از یکی از placeholder های زیر استفاده کنید:</p>
+                <p>برای ارسال لینک پرداخت در پیامک‌های وضعیت <strong>"تایید شده - منتظر پرداخت"</strong> (approved-payment)، می‌توانید از یکی از placeholder های زیر استفاده کنید:</p>
 
                 <div style="background: #fff; padding: 15px; border-radius: 5px; margin: 10px 0;">
-                    <p style="margin: 5px 0;"><code>{order_pay_url}</code> ← توصیه می‌شود (بیشتر افزونه‌های پیامکی)</p>
-                    <p style="margin: 5px 0;"><code>{payment_link}</code> ← جایگزین</p>
-                    <p style="margin: 5px 0;"><code>[payment_link]</code> ← اگر افزونه شورتکد پشتیبانی می‌کند</p>
+                    <h4 style="margin-top: 0; color: #2196F3;">✅ Placeholders پشتیبانی شده:</h4>
+                    <p style="margin: 5px 0;"><code>{order_pay_url}</code> ← اولین انتخاب (توصیه می‌شود)</p>
+                    <p style="margin: 5px 0;"><code>{payment_link}</code></p>
+                    <p style="margin: 5px 0;"><code>{pay_link}</code></p>
+                    <p style="margin: 5px 0;"><code>{pay_url}</code></p>
+                    <p style="margin: 5px 0;"><code>[payment_link]</code> و <code>[order_pay_url]</code></p>
+                    <p style="margin: 5px 0;"><code>%payment_link%</code> و <code>%order_pay_url%</code></p>
                 </div>
 
                 <p style="font-size: 13px; color: #666; margin-top: 10px;">
                     <strong>مثال متن پیامک:</strong><br>
-                    <code style="background: #fff; padding: 5px; display: block; margin: 5px 0;">
+                    <code style="background: #fff; padding: 10px; display: block; margin: 5px 0; border: 1px solid #ddd; border-radius: 3px;">
                         سلام {customer_name}<br>
                         سفارش شما تایید شد!<br>
-                        برای پرداخت به لینک زیر مراجعه کنید:<br>
+                        برای پرداخت کلیک کنید:<br>
                         {order_pay_url}
                     </code>
                 </p>
 
                 <p style="font-size: 12px; color: #999; margin-top: 10px;">
-                    این placeholder ها خودکار با لینک پرداخت سفارش جایگزین می‌شوند.
+                    ⚠️ مهم: این placeholders فقط در پیامک‌های وضعیت "تایید شده - منتظر پرداخت" جایگزین می‌شوند.
                 </p>
             </div>
             <?php endif; ?>
@@ -1258,11 +1253,11 @@ add_action('plugins_loaded', 'wc_admin_approval_payment_init');
 // فعال‌سازی افزونه
 register_activation_hook(__FILE__, function() {
     flush_rewrite_rules();
-    update_option('wc_admin_approval_flushed_v4', 0);
+    update_option('wc_admin_approval_flushed_v42', 0);
 });
 
 // غیرفعال‌سازی افزونه
 register_deactivation_hook(__FILE__, function() {
     flush_rewrite_rules();
-    delete_option('wc_admin_approval_flushed_v4');
+    delete_option('wc_admin_approval_flushed_v42');
 });
