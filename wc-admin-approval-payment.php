@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 4.0.0
+ * Version: 4.1.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -77,9 +77,10 @@ class WC_Admin_Approval_Payment {
         // جلوگیری از تغییر خودکار وضعیت
         add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
 
-        // تغییر redirect بعد از checkout - اضافه کردن هوک جدید
+        // تغییر redirect بعد از checkout - چند هوک برای اطمینان
         add_filter('woocommerce_get_checkout_order_received_url', array($this, 'custom_redirect_after_purchase'), 10, 2);
-        add_action('woocommerce_thankyou', array($this, 'redirect_to_approval_page'), 1);
+        add_action('template_redirect', array($this, 'force_redirect_to_approval_page'), 5);
+        add_action('wp_footer', array($this, 'add_redirect_script'));
 
         // صفحه انتظار تایید
         add_action('init', array($this, 'register_pending_approval_endpoint'), 20);
@@ -114,19 +115,19 @@ class WC_Admin_Approval_Payment {
         // اضافه کردن رنگ به وضعیت‌ها در ادمین
         add_action('admin_head', array($this, 'add_custom_status_colors'));
 
-        // شورتکد برای لینک پرداخت (برای استفاده در پیامک)
-        add_shortcode('payment_link', array($this, 'payment_link_shortcode'));
-
-        // اضافه کردن placeholder برای پیامک‌ها
+        // اضافه کردن placeholder برای افزونه‌های پیامکی
         add_filter('woocommerce_email_order_meta_fields', array($this, 'add_email_order_meta'), 10, 3);
+
+        // پشتیبانی از افزونه‌های پیامکی مختلف
+        add_filter('wc_parsgreen_sms_text', array($this, 'add_payment_link_to_sms'), 10, 3);
+        add_filter('woocommerce_sms_text', array($this, 'add_payment_link_to_sms'), 10, 3);
+        add_filter('wp_sms_text_content', array($this, 'add_payment_link_to_sms'), 10, 3);
     }
 
     /**
      * ثبت وضعیت‌های سفارشی سفارش
-     * این تابع وضعیت‌های جدید را در وردپرس ثبت می‌کند
      */
     public function register_custom_order_statuses() {
-        // وضعیت 1: منتظر تایید مدیر
         register_post_status('wc-awaiting-approval', array(
             'label'                     => 'منتظر تایید مدیر',
             'public'                    => true,
@@ -136,7 +137,6 @@ class WC_Admin_Approval_Payment {
             'label_count'               => _n_noop('منتظر تایید مدیر <span class="count">(%s)</span>', 'منتظر تایید مدیر <span class="count">(%s)</span>')
         ));
 
-        // وضعیت 2: تایید شده - در انتظار پرداخت
         register_post_status('wc-approved-payment', array(
             'label'                     => 'تایید شده - منتظر پرداخت',
             'public'                    => true,
@@ -148,17 +148,14 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * اضافه کردن وضعیت‌های سفارشی به لیست وضعیت‌های ووکامرس
-     * این تابع به ووکامرس می‌گوید که این وضعیت‌ها را بشناسد
+     * اضافه کردن وضعیت‌های سفارشی به لیست ووکامرس
      */
     public function add_custom_order_statuses($order_statuses) {
         $new_order_statuses = array();
 
-        // وضعیت‌های قبلی را نگه می‌داریم و در جای مناسب وضعیت‌های جدید را اضافه می‌کنیم
         foreach ($order_statuses as $key => $status) {
             $new_order_statuses[$key] = $status;
 
-            // بعد از pending وضعیت‌های جدید را اضافه می‌کنیم
             if ('wc-pending' === $key) {
                 $new_order_statuses['wc-awaiting-approval'] = 'منتظر تایید مدیر';
                 $new_order_statuses['wc-approved-payment'] = 'تایید شده - منتظر پرداخت';
@@ -169,7 +166,7 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * اضافه کردن وضعیت‌ها به bulk actions در پنل مدیریت
+     * اضافه کردن وضعیت‌ها به bulk actions
      */
     public function add_bulk_actions($bulk_actions) {
         $bulk_actions['mark_awaiting-approval'] = 'تغییر وضعیت به منتظر تایید مدیر';
@@ -184,7 +181,6 @@ class WC_Admin_Approval_Payment {
     public function add_order_status_filters($views) {
         global $wpdb;
 
-        // شمارش سفارشات منتظر تایید
         $awaiting_count = $wpdb->get_var("
             SELECT COUNT(*)
             FROM {$wpdb->posts}
@@ -192,7 +188,6 @@ class WC_Admin_Approval_Payment {
             AND post_status = 'wc-awaiting-approval'
         ");
 
-        // شمارش سفارشات تایید شده
         $approved_count = $wpdb->get_var("
             SELECT COUNT(*)
             FROM {$wpdb->posts}
@@ -249,14 +244,12 @@ class WC_Admin_Approval_Payment {
     public function add_admin_approval_field() {
         global $post;
 
-        // بررسی وجود post
         if (!$post || !$post->ID) {
             return;
         }
 
         $product = wc_get_product($post->ID);
 
-        // نمایش فیلد برای محصولات ساده
         if ($product && $product->is_type('simple')) {
             echo '<div class="options_group">';
 
@@ -282,7 +275,6 @@ class WC_Admin_Approval_Payment {
 
     /**
      * تنظیم وضعیت سفارش به "منتظر تایید مدیر"
-     * این تابع بعد از ثبت سفارش اجرا می‌شود
      */
     public function set_order_awaiting_approval($order_id, $data) {
         $order = wc_get_order($order_id);
@@ -293,7 +285,6 @@ class WC_Admin_Approval_Payment {
 
         $needs_approval = false;
 
-        // بررسی آیتم‌های سفارش
         foreach ($order->get_items() as $item) {
             $product = $item->get_product();
             if ($product && $product->is_type('simple')) {
@@ -306,17 +297,15 @@ class WC_Admin_Approval_Payment {
         }
 
         if ($needs_approval) {
-            // ذخیره اطلاعات
             update_post_meta($order_id, '_requires_admin_approval', 'yes');
             update_post_meta($order_id, '_approval_request_time', current_time('mysql'));
 
-            // تغییر وضعیت به "منتظر تایید مدیر" با استفاده از وضعیت سفارشی
             $order->update_status('awaiting-approval', 'سفارش در انتظار تایید مدیر است.', true);
         }
     }
 
     /**
-     * جلوگیری از تغییر خودکار وضعیت به completed
+     * جلوگیری از تغییر خودکار وضعیت
      */
     public function prevent_auto_complete($status, $order_id, $order) {
         $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
@@ -324,12 +313,10 @@ class WC_Admin_Approval_Payment {
         if ($requires_approval === 'yes') {
             $current_status = $order->get_status();
 
-            // اگر در وضعیت انتظار تایید است، نگه دارش
             if ($current_status === 'awaiting-approval') {
                 return 'awaiting-approval';
             }
 
-            // اگر در وضعیت تایید شده است، نگه دارش
             if ($current_status === 'approved-payment') {
                 return 'approved-payment';
             }
@@ -352,15 +339,30 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * Redirect به صفحه انتظار تایید (هوک اضافی برای اطمینان)
+     * Redirect اجباری به صفحه انتظار تایید - اولویت بالا
      */
-    public function redirect_to_approval_page($order_id) {
+    public function force_redirect_to_approval_page() {
+        // فقط در صفحه order-received اجرا شود
+        if (!is_wc_endpoint_url('order-received')) {
+            return;
+        }
+
+        global $wp;
+
+        // دریافت order_id از URL
+        $order_id = isset($wp->query_vars['order-received']) ? absint($wp->query_vars['order-received']) : 0;
+
+        if (!$order_id) {
+            return;
+        }
+
         $order = wc_get_order($order_id);
 
         if (!$order) {
             return;
         }
 
+        // بررسی نیاز به تایید
         $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
 
         if ($requires_approval === 'yes' && $order->get_status() === 'awaiting-approval') {
@@ -371,12 +373,43 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
+     * اضافه کردن JavaScript redirect به عنوان backup
+     */
+    public function add_redirect_script() {
+        if (!is_wc_endpoint_url('order-received')) {
+            return;
+        }
+
+        global $wp;
+        $order_id = isset($wp->query_vars['order-received']) ? absint($wp->query_vars['order-received']) : 0;
+
+        if (!$order_id) {
+            return;
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
+
+        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+
+        if ($requires_approval === 'yes' && $order->get_status() === 'awaiting-approval') {
+            $redirect_url = home_url('/pending-approval/?order_id=' . $order_id . '&key=' . $order->get_order_key());
+            ?>
+            <script type="text/javascript">
+                window.location.href = '<?php echo esc_js($redirect_url); ?>';
+            </script>
+            <?php
+        }
+    }
+
+    /**
      * ثبت endpoint برای صفحه انتظار تایید
      */
     public function register_pending_approval_endpoint() {
         add_rewrite_rule('^pending-approval/?', 'index.php?pending_approval=1', 'top');
 
-        // فلاش rewrite rules در صورت نیاز
         if (!get_option('wc_admin_approval_flushed_v4')) {
             flush_rewrite_rules();
             update_option('wc_admin_approval_flushed_v4', 1);
@@ -579,14 +612,12 @@ class WC_Admin_Approval_Payment {
                     <p>سفارش شما توسط مدیریت تایید شد.</p>
                     <p>اکنون می‌توانید نسبت به پرداخت اقدام کنید.</p>
 
-                    <!-- دکمه پرداخت -->
                     <div style="text-align: center; margin: 30px 0;">
                         <a href="<?php echo esc_url($order->get_checkout_payment_url()); ?>" class="payment-button">
                             💳 پرداخت سفارش
                         </a>
                     </div>
 
-                    <!-- لینک پرداخت برای کپی کردن -->
                     <div class="payment-link-box">
                         <p><strong>🔗 لینک پرداخت شما:</strong></p>
                         <p style="font-size: 13px;">می‌توانید این لینک را ذخیره کنید و در هر زمان از طریق آن پرداخت نمایید.</p>
@@ -644,7 +675,6 @@ class WC_Admin_Approval_Payment {
 
         <?php if ($order_status === 'awaiting-approval'): ?>
         <script>
-            // بروزرسانی خودکار هر 5 ثانیه
             setInterval(function() {
                 var xhr = new XMLHttpRequest();
                 xhr.open('POST', '<?php echo admin_url('admin-ajax.php'); ?>', true);
@@ -667,27 +697,39 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * شورتکد لینک پرداخت - برای استفاده در پیامک‌ها
-     * استفاده: [payment_link order_id="123"]
+     * اضافه کردن لینک پرداخت به متن پیامک
+     * این تابع با افزونه‌های مختلف پیامکی کار می‌کند
      */
-    public function payment_link_shortcode($atts) {
-        $atts = shortcode_atts(array(
-            'order_id' => 0,
-        ), $atts);
-
-        $order_id = intval($atts['order_id']);
+    public function add_payment_link_to_sms($text, $order_id = null, $status = null) {
+        // اگر order_id نداریم، سعی می‌کنیم از global بگیریم
+        if (!$order_id && isset($GLOBALS['wc_order_id'])) {
+            $order_id = $GLOBALS['wc_order_id'];
+        }
 
         if (!$order_id) {
-            return '';
+            return $text;
         }
 
         $order = wc_get_order($order_id);
 
         if (!$order) {
-            return '';
+            return $text;
         }
 
-        return $order->get_checkout_payment_url();
+        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+
+        // فقط برای سفارشات تایید شده
+        if ($requires_approval === 'yes' && $order->get_status() === 'approved-payment') {
+            $payment_url = $order->get_checkout_payment_url();
+
+            // جایگزینی placeholder های مختلف
+            $text = str_replace('{payment_link}', $payment_url, $text);
+            $text = str_replace('{order_pay_url}', $payment_url, $text);
+            $text = str_replace('[payment_link]', $payment_url, $text);
+            $text = str_replace('%payment_link%', $payment_url, $text);
+        }
+
+        return $text;
     }
 
     /**
@@ -727,7 +769,6 @@ class WC_Admin_Approval_Payment {
     public function admin_page_content() {
         $status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : 'awaiting-approval';
 
-        // دریافت سفارشات نیازمند تایید
         $args = array(
             'limit' => -1,
             'meta_query' => array(
@@ -848,13 +889,27 @@ class WC_Admin_Approval_Payment {
 
             <?php if (!empty($orders)): ?>
             <div style="margin-top: 20px; padding: 15px; background: #f0f8ff; border-right: 4px solid #2196F3; direction: rtl;">
-                <h3 style="margin-top: 0;">💡 نکته: استفاده از لینک پرداخت در پیامک</h3>
-                <p>برای ارسال لینک پرداخت در پیامک‌ها، می‌توانید از placeholder زیر استفاده کنید:</p>
-                <code style="background: #fff; padding: 10px; display: block; margin: 10px 0; direction: ltr; text-align: left;">
-                    {order_pay_url}
-                </code>
-                <p style="font-size: 13px; color: #666;">
-                    این placeholder در بیشتر افزونه‌های پیامکی ووکامرس پشتیبانی می‌شود و به صورت خودکار با لینک پرداخت سفارش جایگزین می‌گردد.
+                <h3 style="margin-top: 0;">💡 راهنمای استفاده از لینک پرداخت در پیامک</h3>
+                <p>برای ارسال لینک پرداخت در پیامک‌های وضعیت <strong>"تایید شده - منتظر پرداخت"</strong>، می‌توانید از یکی از placeholder های زیر استفاده کنید:</p>
+
+                <div style="background: #fff; padding: 15px; border-radius: 5px; margin: 10px 0;">
+                    <p style="margin: 5px 0;"><code>{order_pay_url}</code> ← توصیه می‌شود (بیشتر افزونه‌های پیامکی)</p>
+                    <p style="margin: 5px 0;"><code>{payment_link}</code> ← جایگزین</p>
+                    <p style="margin: 5px 0;"><code>[payment_link]</code> ← اگر افزونه شورتکد پشتیبانی می‌کند</p>
+                </div>
+
+                <p style="font-size: 13px; color: #666; margin-top: 10px;">
+                    <strong>مثال متن پیامک:</strong><br>
+                    <code style="background: #fff; padding: 5px; display: block; margin: 5px 0;">
+                        سلام {customer_name}<br>
+                        سفارش شما تایید شد!<br>
+                        برای پرداخت به لینک زیر مراجعه کنید:<br>
+                        {order_pay_url}
+                    </code>
+                </p>
+
+                <p style="font-size: 12px; color: #999; margin-top: 10px;">
+                    این placeholder ها خودکار با لینک پرداخت سفارش جایگزین می‌شوند.
                 </p>
             </div>
             <?php endif; ?>
@@ -889,7 +944,6 @@ class WC_Admin_Approval_Payment {
         update_post_meta($order_id, '_approval_time', current_time('mysql'));
         update_post_meta($order_id, '_approved_by', get_current_user_id());
 
-        // تغییر وضعیت به "تایید شده - منتظر پرداخت"
         $order->update_status('approved-payment', 'سفارش توسط مدیریت تایید شد و آماده پرداخت است.', true);
     }
 
@@ -906,7 +960,6 @@ class WC_Admin_Approval_Payment {
         update_post_meta($order_id, '_rejection_time', current_time('mysql'));
         update_post_meta($order_id, '_rejected_by', get_current_user_id());
 
-        // تغییر وضعیت به لغو شده
         $order->update_status('cancelled', 'سفارش توسط مدیریت رد شد.', true);
     }
 
@@ -1130,7 +1183,6 @@ class WC_Admin_Approval_Payment {
                 echo '<p><strong>تایید کننده:</strong> ' . $user->display_name . '</p>';
             }
 
-            // نمایش لینک پرداخت
             echo '<div style="margin-top: 15px; padding: 15px; background: #e8f5e9; border-right: 4px solid #28a745;">';
             echo '<p><strong>🔗 لینک پرداخت:</strong></p>';
             echo '<input type="text" readonly value="' . esc_url($order->get_checkout_payment_url()) . '" style="width: 100%; padding: 8px; font-size: 12px;" onclick="this.select();">';
@@ -1205,7 +1257,6 @@ add_action('plugins_loaded', 'wc_admin_approval_payment_init');
 
 // فعال‌سازی افزونه
 register_activation_hook(__FILE__, function() {
-    // فلاش rewrite rules
     flush_rewrite_rules();
     update_option('wc_admin_approval_flushed_v4', 0);
 });
