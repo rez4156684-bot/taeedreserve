@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 4.8.0
+ * Version: 4.9.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -886,12 +886,27 @@ class WC_Admin_Approval_Payment {
                         <span class="payment-link-url"><?php echo esc_url($order->get_checkout_payment_url()); ?></span>
                     </div>
                 </div>
-            <?php elseif ($order_status === 'cancelled' || $order_status === 'failed'): ?>
-                <div class="approval-status rejected">
-                    <div class="icon">❌</div>
-                    <h2>سفارش رد شد</h2>
-                    <p>متأسفانه سفارش شما توسط مدیریت تایید نشد.</p>
-                    <p>برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.</p>
+            <?php else: ?>
+                <!-- Debug: نمایش وضعیت و لینک پرداخت برای همه حالت‌ها -->
+                <div class="approval-status">
+                    <h2>وضعیت سفارش: <?php echo wc_get_order_status_name($order_status); ?></h2>
+                    <p>شماره سفارش: #<?php echo $order->get_order_number(); ?></p>
+
+                    <div class="payment-link-box">
+                        <p><strong>🔗 لینک پرداخت:</strong></p>
+                        <span class="payment-link-url"><?php echo esc_url($order->get_checkout_payment_url()); ?></span>
+                        <p style="margin-top: 15px;">
+                            <a href="<?php echo esc_url($order->get_checkout_payment_url()); ?>" class="payment-button">
+                                💳 پرداخت سفارش
+                            </a>
+                        </p>
+                    </div>
+
+                    <p style="margin-top: 20px;">
+                        <a href="<?php echo wc_get_account_endpoint_url('pending-payments'); ?>" class="button">
+                            مشاهده همه سفارشات در انتظار
+                        </a>
+                    </p>
                 </div>
             <?php endif; ?>
 
@@ -1535,13 +1550,20 @@ class WC_Admin_Approval_Payment {
             echo '<div class="approval-card-footer">';
             echo '<span class="approval-card-total">جمع کل: ' . wc_price($order->get_total()) . '</span>';
 
+            // همیشه لینک پرداخت نمایش بده
+            $payment_url = $order->get_checkout_payment_url();
+            echo '<div>';
+
             if ($order_status === 'approved-payment') {
-                echo '<a href="' . esc_url($order->get_checkout_payment_url()) . '" class="button payment-button">💳 پرداخت سفارش</a>';
+                echo '<a href="' . esc_url($payment_url) . '" class="button payment-button">💳 پرداخت سفارش</a>';
             } elseif ($order_status === 'awaiting-approval') {
-                echo '<span style="color: #666; font-size: 14px;"><span class="approval-spinner"></span> در حال بررسی...</span>';
+                echo '<span style="color: #666; font-size: 14px; display: block; margin-bottom: 10px;"><span class="approval-spinner"></span> در حال بررسی...</span>';
+                echo '<a href="' . esc_url($payment_url) . '" class="button" style="font-size: 12px; padding: 6px 12px;">مشاهده لینک پرداخت</a>';
             } else {
-                echo '<span style="color: #999;">سفارش رد شده</span>';
+                echo '<span style="color: #999; display: block; margin-bottom: 10px;">سفارش رد شده</span>';
             }
+
+            echo '</div>';
 
             echo '</div>';
 
