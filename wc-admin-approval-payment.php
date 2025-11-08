@@ -77,8 +77,9 @@ class WC_Admin_Approval_Payment {
         // جلوگیری از تغییر خودکار وضعیت
         add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
 
-        // تغییر redirect بعد از checkout
+        // تغییر redirect بعد از checkout - اضافه کردن هوک جدید
         add_filter('woocommerce_get_checkout_order_received_url', array($this, 'custom_redirect_after_purchase'), 10, 2);
+        add_action('woocommerce_thankyou', array($this, 'redirect_to_approval_page'), 1);
 
         // صفحه انتظار تایید
         add_action('init', array($this, 'register_pending_approval_endpoint'), 20);
@@ -112,6 +113,12 @@ class WC_Admin_Approval_Payment {
 
         // اضافه کردن رنگ به وضعیت‌ها در ادمین
         add_action('admin_head', array($this, 'add_custom_status_colors'));
+
+        // شورتکد برای لینک پرداخت (برای استفاده در پیامک)
+        add_shortcode('payment_link', array($this, 'payment_link_shortcode'));
+
+        // اضافه کردن placeholder برای پیامک‌ها
+        add_filter('woocommerce_email_order_meta_fields', array($this, 'add_email_order_meta'), 10, 3);
     }
 
     /**
@@ -345,6 +352,25 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
+     * Redirect به صفحه انتظار تایید (هوک اضافی برای اطمینان)
+     */
+    public function redirect_to_approval_page($order_id) {
+        $order = wc_get_order($order_id);
+
+        if (!$order) {
+            return;
+        }
+
+        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+
+        if ($requires_approval === 'yes' && $order->get_status() === 'awaiting-approval') {
+            $redirect_url = home_url('/pending-approval/?order_id=' . $order_id . '&key=' . $order->get_order_key());
+            wp_redirect($redirect_url);
+            exit;
+        }
+    }
+
+    /**
      * ثبت endpoint برای صفحه انتظار تایید
      */
     public function register_pending_approval_endpoint() {
@@ -499,14 +525,40 @@ class WC_Admin_Approval_Payment {
                 font-size: 18px;
                 margin-top: 20px;
                 transition: background 0.3s;
+                font-weight: bold;
             }
             .payment-button:hover {
                 background: #218838;
                 color: #fff;
+                text-decoration: none;
             }
             .icon {
                 font-size: 48px;
                 margin-bottom: 15px;
+            }
+            .payment-link-box {
+                background: #e8f5e9;
+                border: 2px dashed #28a745;
+                padding: 20px;
+                margin: 20px 0;
+                border-radius: 8px;
+                text-align: center;
+            }
+            .payment-link-box p {
+                margin: 10px 0;
+                font-size: 14px;
+                color: #555;
+            }
+            .payment-link-url {
+                display: block;
+                background: #fff;
+                padding: 10px;
+                border-radius: 5px;
+                margin: 10px 0;
+                word-wrap: break-word;
+                font-size: 12px;
+                color: #666;
+                border: 1px solid #ddd;
             }
         </style>
 
@@ -526,10 +578,19 @@ class WC_Admin_Approval_Payment {
                     <h2>سفارش شما تایید شد!</h2>
                     <p>سفارش شما توسط مدیریت تایید شد.</p>
                     <p>اکنون می‌توانید نسبت به پرداخت اقدام کنید.</p>
-                    <div style="text-align: center;">
+
+                    <!-- دکمه پرداخت -->
+                    <div style="text-align: center; margin: 30px 0;">
                         <a href="<?php echo esc_url($order->get_checkout_payment_url()); ?>" class="payment-button">
-                            پرداخت سفارش
+                            💳 پرداخت سفارش
                         </a>
+                    </div>
+
+                    <!-- لینک پرداخت برای کپی کردن -->
+                    <div class="payment-link-box">
+                        <p><strong>🔗 لینک پرداخت شما:</strong></p>
+                        <p style="font-size: 13px;">می‌توانید این لینک را ذخیره کنید و در هر زمان از طریق آن پرداخت نمایید.</p>
+                        <span class="payment-link-url"><?php echo esc_url($order->get_checkout_payment_url()); ?></span>
                     </div>
                 </div>
             <?php elseif ($order_status === 'cancelled' || $order_status === 'failed'): ?>
@@ -603,6 +664,46 @@ class WC_Admin_Approval_Payment {
 
         <?php
         get_footer();
+    }
+
+    /**
+     * شورتکد لینک پرداخت - برای استفاده در پیامک‌ها
+     * استفاده: [payment_link order_id="123"]
+     */
+    public function payment_link_shortcode($atts) {
+        $atts = shortcode_atts(array(
+            'order_id' => 0,
+        ), $atts);
+
+        $order_id = intval($atts['order_id']);
+
+        if (!$order_id) {
+            return '';
+        }
+
+        $order = wc_get_order($order_id);
+
+        if (!$order) {
+            return '';
+        }
+
+        return $order->get_checkout_payment_url();
+    }
+
+    /**
+     * اضافه کردن placeholder برای ایمیل‌ها
+     */
+    public function add_email_order_meta($fields, $sent_to_admin, $order) {
+        $requires_approval = get_post_meta($order->get_id(), '_requires_admin_approval', true);
+
+        if ($requires_approval === 'yes' && $order->get_status() === 'approved-payment') {
+            $fields['payment_link'] = array(
+                'label' => 'لینک پرداخت',
+                'value' => $order->get_checkout_payment_url(),
+            );
+        }
+
+        return $fields;
     }
 
     /**
@@ -731,6 +832,10 @@ class WC_Admin_Approval_Payment {
                                                 رد
                                             </button>
                                         </form>
+                                    <?php elseif ($order_status === 'approved-payment'): ?>
+                                        <a href="<?php echo esc_url($order->get_checkout_payment_url()); ?>" class="button" target="_blank">
+                                            مشاهده لینک پرداخت
+                                        </a>
                                     <?php else: ?>
                                         -
                                     <?php endif; ?>
@@ -740,6 +845,19 @@ class WC_Admin_Approval_Payment {
                     <?php endif; ?>
                 </tbody>
             </table>
+
+            <?php if (!empty($orders)): ?>
+            <div style="margin-top: 20px; padding: 15px; background: #f0f8ff; border-right: 4px solid #2196F3; direction: rtl;">
+                <h3 style="margin-top: 0;">💡 نکته: استفاده از لینک پرداخت در پیامک</h3>
+                <p>برای ارسال لینک پرداخت در پیامک‌ها، می‌توانید از placeholder زیر استفاده کنید:</p>
+                <code style="background: #fff; padding: 10px; display: block; margin: 10px 0; direction: ltr; text-align: left;">
+                    {order_pay_url}
+                </code>
+                <p style="font-size: 13px; color: #666;">
+                    این placeholder در بیشتر افزونه‌های پیامکی ووکامرس پشتیبانی می‌شود و به صورت خودکار با لینک پرداخت سفارش جایگزین می‌گردد.
+                </p>
+            </div>
+            <?php endif; ?>
         </div>
 
         <style>
@@ -1011,6 +1129,13 @@ class WC_Admin_Approval_Payment {
                 $user = get_userdata($approved_by);
                 echo '<p><strong>تایید کننده:</strong> ' . $user->display_name . '</p>';
             }
+
+            // نمایش لینک پرداخت
+            echo '<div style="margin-top: 15px; padding: 15px; background: #e8f5e9; border-right: 4px solid #28a745;">';
+            echo '<p><strong>🔗 لینک پرداخت:</strong></p>';
+            echo '<input type="text" readonly value="' . esc_url($order->get_checkout_payment_url()) . '" style="width: 100%; padding: 8px; font-size: 12px;" onclick="this.select();">';
+            echo '<p style="font-size: 11px; margin: 5px 0 0 0; color: #666;">برای کپی کردن روی لینک کلیک کنید</p>';
+            echo '</div>';
         }
 
         echo '</div>';
