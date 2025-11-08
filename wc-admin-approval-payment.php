@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
- * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس - الهام گرفته از WooCommerce Order Approval
- * Version: 3.1.0
+ * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
+ * Version: 4.0.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -55,11 +55,23 @@ class WC_Admin_Approval_Payment {
      * راه‌اندازی هوک‌ها
      */
     private function init_hooks() {
+        // ثبت وضعیت‌های سفارشی - این باید اول اجرا شود!
+        add_action('init', array($this, 'register_custom_order_statuses'));
+
+        // اضافه کردن وضعیت‌ها به لیست ووکامرس
+        add_filter('wc_order_statuses', array($this, 'add_custom_order_statuses'));
+
+        // اضافه کردن به bulk actions در پنل مدیریت
+        add_filter('bulk_actions-edit-shop_order', array($this, 'add_bulk_actions'));
+
+        // اضافه کردن به فیلترهای سفارشات
+        add_filter('views_edit-shop_order', array($this, 'add_order_status_filters'));
+
         // اضافه کردن فیلد به محصولات ساده
         add_action('woocommerce_product_options_general_product_data', array($this, 'add_admin_approval_field'));
         add_action('woocommerce_process_product_meta', array($this, 'save_admin_approval_field'));
 
-        // مدیریت وضعیت سفارش جدید - اینجا مهم است!
+        // مدیریت وضعیت سفارش جدید
         add_action('woocommerce_checkout_update_order_meta', array($this, 'set_order_awaiting_approval'), 10, 2);
 
         // جلوگیری از تغییر خودکار وضعیت
@@ -69,7 +81,7 @@ class WC_Admin_Approval_Payment {
         add_filter('woocommerce_get_checkout_order_received_url', array($this, 'custom_redirect_after_purchase'), 10, 2);
 
         // صفحه انتظار تایید
-        add_action('init', array($this, 'register_pending_approval_endpoint'));
+        add_action('init', array($this, 'register_pending_approval_endpoint'), 20);
         add_filter('query_vars', array($this, 'add_query_vars'));
         add_action('template_redirect', array($this, 'handle_pending_approval_page'));
 
@@ -81,7 +93,7 @@ class WC_Admin_Approval_Payment {
         // نمایش در پنل کاربری
         add_filter('woocommerce_account_menu_items', array($this, 'add_my_account_menu_item'));
         add_action('woocommerce_account_pending-payments_endpoint', array($this, 'pending_payments_content'));
-        add_action('init', array($this, 'add_pending_payments_endpoint'));
+        add_action('init', array($this, 'add_pending_payments_endpoint'), 20);
 
         // اضافه کردن ستون وضعیت تایید به لیست سفارشات
         add_filter('manage_edit-shop_order_columns', array($this, 'add_approval_column'));
@@ -97,6 +109,131 @@ class WC_Admin_Approval_Payment {
         // اضافه کردن اکشن‌های دستی به لیست سفارشات
         add_filter('woocommerce_admin_order_actions', array($this, 'add_custom_order_actions'), 10, 2);
         add_action('admin_action_approve_order', array($this, 'process_approve_order_action'));
+
+        // اضافه کردن رنگ به وضعیت‌ها در ادمین
+        add_action('admin_head', array($this, 'add_custom_status_colors'));
+    }
+
+    /**
+     * ثبت وضعیت‌های سفارشی سفارش
+     * این تابع وضعیت‌های جدید را در وردپرس ثبت می‌کند
+     */
+    public function register_custom_order_statuses() {
+        // وضعیت 1: منتظر تایید مدیر
+        register_post_status('wc-awaiting-approval', array(
+            'label'                     => 'منتظر تایید مدیر',
+            'public'                    => true,
+            'exclude_from_search'       => false,
+            'show_in_admin_all_list'    => true,
+            'show_in_admin_status_list' => true,
+            'label_count'               => _n_noop('منتظر تایید مدیر <span class="count">(%s)</span>', 'منتظر تایید مدیر <span class="count">(%s)</span>')
+        ));
+
+        // وضعیت 2: تایید شده - در انتظار پرداخت
+        register_post_status('wc-approved-payment', array(
+            'label'                     => 'تایید شده - منتظر پرداخت',
+            'public'                    => true,
+            'exclude_from_search'       => false,
+            'show_in_admin_all_list'    => true,
+            'show_in_admin_status_list' => true,
+            'label_count'               => _n_noop('تایید شده - منتظر پرداخت <span class="count">(%s)</span>', 'تایید شده - منتظر پرداخت <span class="count">(%s)</span>')
+        ));
+    }
+
+    /**
+     * اضافه کردن وضعیت‌های سفارشی به لیست وضعیت‌های ووکامرس
+     * این تابع به ووکامرس می‌گوید که این وضعیت‌ها را بشناسد
+     */
+    public function add_custom_order_statuses($order_statuses) {
+        $new_order_statuses = array();
+
+        // وضعیت‌های قبلی را نگه می‌داریم و در جای مناسب وضعیت‌های جدید را اضافه می‌کنیم
+        foreach ($order_statuses as $key => $status) {
+            $new_order_statuses[$key] = $status;
+
+            // بعد از pending وضعیت‌های جدید را اضافه می‌کنیم
+            if ('wc-pending' === $key) {
+                $new_order_statuses['wc-awaiting-approval'] = 'منتظر تایید مدیر';
+                $new_order_statuses['wc-approved-payment'] = 'تایید شده - منتظر پرداخت';
+            }
+        }
+
+        return $new_order_statuses;
+    }
+
+    /**
+     * اضافه کردن وضعیت‌ها به bulk actions در پنل مدیریت
+     */
+    public function add_bulk_actions($bulk_actions) {
+        $bulk_actions['mark_awaiting-approval'] = 'تغییر وضعیت به منتظر تایید مدیر';
+        $bulk_actions['mark_approved-payment'] = 'تغییر وضعیت به تایید شده - منتظر پرداخت';
+
+        return $bulk_actions;
+    }
+
+    /**
+     * نمایش تعداد در فیلترهای سفارشات
+     */
+    public function add_order_status_filters($views) {
+        global $wpdb;
+
+        // شمارش سفارشات منتظر تایید
+        $awaiting_count = $wpdb->get_var("
+            SELECT COUNT(*)
+            FROM {$wpdb->posts}
+            WHERE post_type = 'shop_order'
+            AND post_status = 'wc-awaiting-approval'
+        ");
+
+        // شمارش سفارشات تایید شده
+        $approved_count = $wpdb->get_var("
+            SELECT COUNT(*)
+            FROM {$wpdb->posts}
+            WHERE post_type = 'shop_order'
+            AND post_status = 'wc-approved-payment'
+        ");
+
+        $views['wc-awaiting-approval'] = sprintf(
+            '<a href="%s"%s>منتظر تایید مدیر <span class="count">(%d)</span></a>',
+            admin_url('edit.php?post_status=wc-awaiting-approval&post_type=shop_order'),
+            (isset($_GET['post_status']) && $_GET['post_status'] === 'wc-awaiting-approval') ? ' class="current"' : '',
+            $awaiting_count
+        );
+
+        $views['wc-approved-payment'] = sprintf(
+            '<a href="%s"%s>تایید شده - منتظر پرداخت <span class="count">(%d)</span></a>',
+            admin_url('edit.php?post_status=wc-approved-payment&post_type=shop_order'),
+            (isset($_GET['post_status']) && $_GET['post_status'] === 'wc-approved-payment') ? ' class="current"' : '',
+            $approved_count
+        );
+
+        return $views;
+    }
+
+    /**
+     * اضافه کردن رنگ‌های سفارشی به وضعیت‌ها
+     */
+    public function add_custom_status_colors() {
+        ?>
+        <style>
+            .order-status.status-awaiting-approval {
+                background: #ffc107;
+                color: #fff;
+            }
+            .order-status.status-approved-payment {
+                background: #28a745;
+                color: #fff;
+            }
+            mark.awaiting-approval {
+                background: #ffc107;
+                color: #fff;
+            }
+            mark.approved-payment {
+                background: #28a745;
+                color: #fff;
+            }
+        </style>
+        <?php
     }
 
     /**
@@ -131,7 +268,8 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * تنظیم وضعیت سفارش به "در حال بررسی" - مهم‌ترین بخش!
+     * تنظیم وضعیت سفارش به "منتظر تایید مدیر"
+     * این تابع بعد از ثبت سفارش اجرا می‌شود
      */
     public function set_order_awaiting_approval($order_id, $data) {
         $order = wc_get_order($order_id);
@@ -159,8 +297,8 @@ class WC_Admin_Approval_Payment {
             update_post_meta($order_id, '_requires_admin_approval', 'yes');
             update_post_meta($order_id, '_approval_request_time', current_time('mysql'));
 
-            // تغییر وضعیت به "در حال بررسی" - FORCE!
-            $order->update_status('on-hold', 'سفارش در انتظار تایید مدیر است.', true);
+            // تغییر وضعیت به "منتظر تایید مدیر" با استفاده از وضعیت سفارشی
+            $order->update_status('awaiting-approval', 'سفارش در انتظار تایید مدیر است.', true);
         }
     }
 
@@ -171,8 +309,17 @@ class WC_Admin_Approval_Payment {
         $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
 
         if ($requires_approval === 'yes') {
-            // اگر هنوز تایید نشده، وضعیت را به on-hold نگه دار
-            return 'on-hold';
+            $current_status = $order->get_status();
+
+            // اگر در وضعیت انتظار تایید است، نگه دارش
+            if ($current_status === 'awaiting-approval') {
+                return 'awaiting-approval';
+            }
+
+            // اگر در وضعیت تایید شده است، نگه دارش
+            if ($current_status === 'approved-payment') {
+                return 'approved-payment';
+            }
         }
 
         return $status;
@@ -198,9 +345,9 @@ class WC_Admin_Approval_Payment {
         add_rewrite_rule('^pending-approval/?', 'index.php?pending_approval=1', 'top');
 
         // فلاش rewrite rules در صورت نیاز
-        if (!get_option('wc_admin_approval_flushed')) {
+        if (!get_option('wc_admin_approval_flushed_v4')) {
             flush_rewrite_rules();
-            update_option('wc_admin_approval_flushed', 1);
+            update_option('wc_admin_approval_flushed_v4', 1);
         }
     }
 
@@ -358,7 +505,7 @@ class WC_Admin_Approval_Payment {
         </style>
 
         <div class="approval-container">
-            <?php if ($order_status === 'on-hold'): ?>
+            <?php if ($order_status === 'awaiting-approval'): ?>
                 <div class="approval-status pending">
                     <div class="icon">⏳</div>
                     <h2>در حال بررسی سفارش</h2>
@@ -367,7 +514,7 @@ class WC_Admin_Approval_Payment {
                     <div class="spinner"></div>
                     <p style="font-size: 14px; color: #666;">این صفحه به صورت خودکار بروزرسانی می‌شود...</p>
                 </div>
-            <?php elseif ($order_status === 'pending'): ?>
+            <?php elseif ($order_status === 'approved-payment'): ?>
                 <div class="approval-status approved">
                     <div class="icon">✅</div>
                     <h2>سفارش شما تایید شد!</h2>
@@ -428,7 +575,7 @@ class WC_Admin_Approval_Payment {
             </div>
         </div>
 
-        <?php if ($order_status === 'on-hold'): ?>
+        <?php if ($order_status === 'awaiting-approval'): ?>
         <script>
             // بروزرسانی خودکار هر 5 ثانیه
             setInterval(function() {
@@ -438,7 +585,7 @@ class WC_Admin_Approval_Payment {
                 xhr.onload = function() {
                     if (xhr.status === 200) {
                         var response = JSON.parse(xhr.responseText);
-                        if (response.success && response.data.status !== 'on-hold') {
+                        if (response.success && response.data.status !== 'awaiting-approval') {
                             location.reload();
                         }
                     }
@@ -471,7 +618,7 @@ class WC_Admin_Approval_Payment {
      * محتوای صفحه مدیریت
      */
     public function admin_page_content() {
-        $status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : 'on-hold';
+        $status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : 'awaiting-approval';
 
         // دریافت سفارشات نیازمند تایید
         $args = array(
@@ -498,8 +645,8 @@ class WC_Admin_Approval_Payment {
                 <div class="alignleft actions">
                     <select name="status_filter" id="status_filter" onchange="location.href='?page=wc-payment-approvals&status='+this.value">
                         <option value="all" <?php selected($status_filter, 'all'); ?>>همه</option>
-                        <option value="on-hold" <?php selected($status_filter, 'on-hold'); ?>>در حال بررسی</option>
-                        <option value="pending" <?php selected($status_filter, 'pending'); ?>>در انتظار پرداخت</option>
+                        <option value="awaiting-approval" <?php selected($status_filter, 'awaiting-approval'); ?>>منتظر تایید</option>
+                        <option value="approved-payment" <?php selected($status_filter, 'approved-payment'); ?>>تایید شده - منتظر پرداخت</option>
                         <option value="cancelled" <?php selected($status_filter, 'cancelled'); ?>>رد شده</option>
                     </select>
                 </div>
@@ -529,8 +676,8 @@ class WC_Admin_Approval_Payment {
                             $request_time = get_post_meta($order->get_id(), '_approval_request_time', true);
 
                             $status_label = array(
-                                'on-hold' => '<span style="color: #ffc107;">⏳ در حال بررسی</span>',
-                                'pending' => '<span style="color: #28a745;">✅ در انتظار پرداخت</span>',
+                                'awaiting-approval' => '<span style="color: #ffc107;">⏳ منتظر تایید</span>',
+                                'approved-payment' => '<span style="color: #28a745;">✅ تایید شده - منتظر پرداخت</span>',
                                 'cancelled' => '<span style="color: #dc3545;">❌ رد شده</span>',
                             );
                             ?>
@@ -560,7 +707,7 @@ class WC_Admin_Approval_Payment {
                                 <td><?php echo $request_time ? date_i18n('Y/m/d H:i', strtotime($request_time)) : '-'; ?></td>
                                 <td><?php echo $status_label[$order_status] ?? wc_get_order_status_name($order_status); ?></td>
                                 <td>
-                                    <?php if ($order_status === 'on-hold'): ?>
+                                    <?php if ($order_status === 'awaiting-approval'): ?>
                                         <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" style="display: inline;">
                                             <input type="hidden" name="action" value="approve_order_payment">
                                             <input type="hidden" name="order_id" value="<?php echo $order->get_id(); ?>">
@@ -618,8 +765,8 @@ class WC_Admin_Approval_Payment {
         update_post_meta($order_id, '_approval_time', current_time('mysql'));
         update_post_meta($order_id, '_approved_by', get_current_user_id());
 
-        // تغییر وضعیت به "در انتظار پرداخت"
-        $order->update_status('pending', 'سفارش توسط مدیریت تایید شد و آماده پرداخت است.');
+        // تغییر وضعیت به "تایید شده - منتظر پرداخت"
+        $order->update_status('approved-payment', 'سفارش توسط مدیریت تایید شد و آماده پرداخت است.', true);
     }
 
     /**
@@ -636,7 +783,7 @@ class WC_Admin_Approval_Payment {
         update_post_meta($order_id, '_rejected_by', get_current_user_id());
 
         // تغییر وضعیت به لغو شده
-        $order->update_status('cancelled', 'سفارش توسط مدیریت رد شد.');
+        $order->update_status('cancelled', 'سفارش توسط مدیریت رد شد.', true);
     }
 
     /**
@@ -740,8 +887,8 @@ class WC_Admin_Approval_Payment {
             $order_status = $order->get_status();
 
             $status_labels = array(
-                'on-hold' => 'در حال بررسی',
-                'pending' => 'در انتظار پرداخت',
+                'awaiting-approval' => 'منتظر تایید',
+                'approved-payment' => 'تایید شده - منتظر پرداخت',
                 'cancelled' => 'رد شده',
             );
 
@@ -752,7 +899,7 @@ class WC_Admin_Approval_Payment {
             echo '<td>' . wc_price($order->get_total()) . '</td>';
             echo '<td>';
 
-            if ($order_status === 'pending') {
+            if ($order_status === 'approved-payment') {
                 echo '<a href="' . esc_url($order->get_checkout_payment_url()) . '" class="button">پرداخت</a>';
             } else {
                 echo '<a href="' . esc_url(home_url('/pending-approval/?order_id=' . $order->get_id() . '&key=' . $order->get_order_key())) . '" class="button">مشاهده</a>';
@@ -802,8 +949,8 @@ class WC_Admin_Approval_Payment {
                 $order_status = $order->get_status();
 
                 $status_labels = array(
-                    'on-hold' => '<span style="color: #ffc107;">⏳ در حال بررسی</span>',
-                    'pending' => '<span style="color: #28a745;">✅ در انتظار پرداخت</span>',
+                    'awaiting-approval' => '<span style="color: #ffc107;">⏳ منتظر تایید</span>',
+                    'approved-payment' => '<span style="color: #28a745;">✅ تایید شده - منتظر پرداخت</span>',
                     'cancelled' => '<span style="color: #dc3545;">❌ رد شده</span>',
                 );
 
@@ -831,8 +978,8 @@ class WC_Admin_Approval_Payment {
         echo '<h3>وضعیت تایید پرداخت</h3>';
 
         $status_info = array(
-            'on-hold' => array('label' => 'در حال بررسی', 'color' => '#ffc107'),
-            'pending' => array('label' => 'در انتظار پرداخت (تایید شده)', 'color' => '#28a745'),
+            'awaiting-approval' => array('label' => 'منتظر تایید مدیر', 'color' => '#ffc107'),
+            'approved-payment' => array('label' => 'تایید شده - منتظر پرداخت', 'color' => '#28a745'),
             'cancelled' => array('label' => 'رد شده', 'color' => '#dc3545'),
         );
 
@@ -846,7 +993,7 @@ class WC_Admin_Approval_Payment {
             echo '<p><strong>زمان درخواست:</strong> ' . date_i18n('Y/m/d H:i', strtotime($request_time)) . '</p>';
         }
 
-        if ($order_status === 'pending') {
+        if ($order_status === 'approved-payment') {
             $approval_time = get_post_meta($order->get_id(), '_approval_time', true);
             $approved_by = get_post_meta($order->get_id(), '_approved_by', true);
 
@@ -872,7 +1019,7 @@ class WC_Admin_Approval_Payment {
         if ($requires_approval === 'yes') {
             $status = $order->get_status();
 
-            if ($status === 'on-hold') {
+            if ($status === 'awaiting-approval') {
                 $actions['approve_order'] = array(
                     'url' => wp_nonce_url(admin_url('admin.php?action=approve_order&order_id=' . $order->get_id()), 'approve-order'),
                     'name' => 'تایید سفارش',
@@ -929,11 +1076,11 @@ add_action('plugins_loaded', 'wc_admin_approval_payment_init');
 register_activation_hook(__FILE__, function() {
     // فلاش rewrite rules
     flush_rewrite_rules();
-    update_option('wc_admin_approval_flushed', 0);
+    update_option('wc_admin_approval_flushed_v4', 0);
 });
 
 // غیرفعال‌سازی افزونه
 register_deactivation_hook(__FILE__, function() {
     flush_rewrite_rules();
-    delete_option('wc_admin_approval_flushed');
+    delete_option('wc_admin_approval_flushed_v4');
 });
