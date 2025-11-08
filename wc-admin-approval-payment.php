@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 4.6.0
+ * Version: 4.7.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -174,12 +174,8 @@ class WC_Admin_Approval_Payment {
         // جلوگیری از تغییر خودکار وضعیت
         add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
 
-        // نمایش محتوای سفارشی در صفحه thankyou
-        add_action('woocommerce_thankyou', array($this, 'display_approval_status_on_thankyou'), 1);
-
-        // مخفی کردن محتوای پیش‌فرض برای سفارشات نیازمند تایید
-        add_filter('woocommerce_thankyou_order_received_text', array($this, 'custom_thankyou_text'), 10, 2);
-        add_action('woocommerce_thankyou', array($this, 'hide_default_order_details'), 1);
+        // رندر کامل صفحه thankyou برای سفارشات نیازمند تایید
+        add_action('template_redirect', array($this, 'render_custom_thankyou_page'), 1);
 
         // صفحه انتظار تایید
         add_action('init', array($this, 'register_pending_approval_endpoint'), 20);
@@ -430,47 +426,17 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * تغییر متن پیش‌فرض صفحه thankyou
+     * رندر کامل صفحه thankyou برای سفارشات نیازمند تایید
      */
-    public function custom_thankyou_text($text, $order) {
-        if (!$order) {
-            return $text;
-        }
-
-        $requires_approval = get_post_meta($order->get_id(), '_requires_admin_approval', true);
-
-        if ($requires_approval === 'yes') {
-            return ''; // خالی کردن متن پیش‌فرض
-        }
-
-        return $text;
-    }
-
-    /**
-     * مخفی کردن جزئیات پیش‌فرض سفارش
-     */
-    public function hide_default_order_details($order_id) {
-        if (!$order_id) {
+    public function render_custom_thankyou_page() {
+        // بررسی اینکه در صفحه order-received هستیم
+        if (!is_wc_endpoint_url('order-received')) {
             return;
         }
 
-        $order = wc_get_order($order_id);
-        if (!$order) {
-            return;
-        }
+        global $wp;
+        $order_id = isset($wp->query_vars['order-received']) ? absint($wp->query_vars['order-received']) : 0;
 
-        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
-
-        if ($requires_approval === 'yes') {
-            // حذف action های پیش‌فرض WooCommerce
-            remove_action('woocommerce_thankyou', 'woocommerce_order_details_table', 10);
-        }
-    }
-
-    /**
-     * نمایش وضعیت تایید در صفحه thankyou
-     */
-    public function display_approval_status_on_thankyou($order_id) {
         if (!$order_id) {
             return;
         }
@@ -487,22 +453,14 @@ class WC_Admin_Approval_Payment {
             return; // سفارش عادی - همان thankyou page معمولی
         }
 
-        // سفارش نیاز به تایید دارد - نمایش محتوای سفارشی
+        // سفارش نیاز به تایید دارد - رندر کامل صفحه سفارشی
         $order_status = $order->get_status();
+
+        // شروع رندر کامل صفحه
+        get_header();
 
         ?>
         <style>
-            /* مخفی کردن همه محتوای پیش‌فرض */
-            .woocommerce-order,
-            .woocommerce-order-overview,
-            .woocommerce-order-details,
-            .woocommerce-customer-details,
-            .woocommerce-bacs-bank-details,
-            .woocommerce-table--order-details,
-            ul.woocommerce-order-overview {
-                display: none !important;
-            }
-
             .approval-status-box {
                 max-width: 800px;
                 margin: 40px auto;
@@ -631,26 +589,6 @@ class WC_Admin_Approval_Payment {
             </div>
 
             <script>
-                // مخفی کردن محتوای پیش‌فرض با JavaScript (اگر CSS کار نکرد)
-                (function() {
-                    var elementsToHide = [
-                        '.woocommerce-order',
-                        '.woocommerce-order-overview',
-                        '.woocommerce-order-details',
-                        '.woocommerce-customer-details',
-                        '.woocommerce-bacs-bank-details',
-                        '.woocommerce-table--order-details',
-                        'ul.woocommerce-order-overview'
-                    ];
-
-                    elementsToHide.forEach(function(selector) {
-                        var elements = document.querySelectorAll(selector);
-                        elements.forEach(function(el) {
-                            el.style.display = 'none';
-                        });
-                    });
-                })();
-
                 // Auto-refresh هر 5 ثانیه
                 setTimeout(function() {
                     location.reload();
@@ -685,28 +623,6 @@ class WC_Admin_Approval_Payment {
                 </div>
             </div>
 
-            <script>
-                // مخفی کردن محتوای پیش‌فرض با JavaScript
-                (function() {
-                    var elementsToHide = [
-                        '.woocommerce-order',
-                        '.woocommerce-order-overview',
-                        '.woocommerce-order-details',
-                        '.woocommerce-customer-details',
-                        '.woocommerce-bacs-bank-details',
-                        '.woocommerce-table--order-details',
-                        'ul.woocommerce-order-overview'
-                    ];
-
-                    elementsToHide.forEach(function(selector) {
-                        var elements = document.querySelectorAll(selector);
-                        elements.forEach(function(el) {
-                            el.style.display = 'none';
-                        });
-                    });
-                })();
-            </script>
-
         <?php elseif ($order_status === 'cancelled' || $order_status === 'failed'): ?>
             <div class="approval-status-box" style="border-color: #dc3545; background: #fff0f0;">
                 <div class="approval-icon">❌</div>
@@ -716,7 +632,11 @@ class WC_Admin_Approval_Payment {
                     برای اطلاعات بیشتر لطفاً با پشتیبانی تماس بگیرید.
                 </p>
             </div>
-        <?php endif;
+        <?php endif; ?>
+
+        <?php
+        get_footer();
+        exit; // جلوگیری از اجرای بقیه کد
     }
 
     /**
