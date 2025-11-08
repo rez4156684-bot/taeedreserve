@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 5.0.0
+ * Version: 5.1.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -222,6 +222,10 @@ class WC_Admin_Approval_Payment {
         add_filter('wp_sms_text_content', array($this, 'replace_sms_placeholders'), 999, 2);
         add_filter('woocommerce_sms_message', array($this, 'replace_sms_placeholders'), 999, 2);
         add_filter('wc_sms_message', array($this, 'replace_sms_placeholders'), 999, 2);
+
+        // AJAX handlers برای بررسی وضعیت سفارش
+        add_action('wp_ajax_check_approval_status', array($this, 'ajax_check_approval_status'));
+        add_action('wp_ajax_nopriv_check_approval_status', array($this, 'ajax_check_approval_status'));
     }
 
     /**
@@ -426,7 +430,7 @@ class WC_Admin_Approval_Payment {
     }
 
     /**
-     * نمایش لینک پرداخت همیشه در صفحه thankyou
+     * نمایش لینک پرداخت همیشه در صفحه thankyou با قابلیت به‌روزرسانی پویا
      */
     public function show_payment_link_always($order_id) {
         if (!$order_id) {
@@ -457,10 +461,26 @@ class WC_Admin_Approval_Payment {
                 padding: 30px;
                 margin: 30px 0;
                 text-align: center;
+                transition: all 0.5s ease;
+            }
+            .wc-approval-payment-box.awaiting {
+                background: #fffbf0;
+                border-color: #ffc107;
+            }
+            .wc-approval-payment-box.approved {
+                background: #f0fff4;
+                border-color: #28a745;
             }
             .wc-approval-payment-box h2 {
                 color: #2196F3;
                 margin-top: 0;
+                transition: all 0.3s ease;
+            }
+            .wc-approval-payment-box.awaiting h2 {
+                color: #ffc107;
+            }
+            .wc-approval-payment-box.approved h2 {
+                color: #28a745;
             }
             .wc-approval-payment-button {
                 display: inline-block;
@@ -472,10 +492,19 @@ class WC_Admin_Approval_Payment {
                 text-decoration: none;
                 border-radius: 5px;
                 margin: 15px 0;
+                border: none;
+                cursor: pointer;
+                transition: all 0.3s ease;
             }
-            .wc-approval-payment-button:hover {
+            .wc-approval-payment-button:hover:not(.disabled) {
                 background: #218838;
                 color: #fff !important;
+                transform: scale(1.05);
+            }
+            .wc-approval-payment-button.disabled {
+                background: #6c757d;
+                cursor: not-allowed;
+                opacity: 0.6;
             }
             .wc-approval-payment-link {
                 display: block;
@@ -487,41 +516,167 @@ class WC_Admin_Approval_Payment {
                 font-size: 14px;
                 border: 1px solid #ddd;
             }
+            .wc-approval-spinner {
+                display: inline-block;
+                width: 20px;
+                height: 20px;
+                border: 3px solid #f3f3f3;
+                border-top: 3px solid #ffc107;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin-left: 10px;
+                vertical-align: middle;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            .fade-in {
+                animation: fadeIn 0.5s ease;
+            }
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(-10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
         </style>
 
-        <div class="wc-approval-payment-box">
-            <?php if ($order_status === 'awaiting-approval'): ?>
-                <h2>⏳ سفارش شما در حال بررسی است</h2>
-                <p>سفارش شما توسط مدیریت در حال بررسی است. پس از تایید، می‌توانید پرداخت کنید.</p>
-                <p><a href="<?php echo wc_get_account_endpoint_url('pending-payments'); ?>" class="button">مشاهده در پنل کاربری</a></p>
+        <div class="wc-approval-payment-box <?php echo $order_status === 'awaiting-approval' ? 'awaiting' : ($order_status === 'approved-payment' ? 'approved' : ''); ?>" id="wc-approval-box-<?php echo $order_id; ?>">
+            <h2 id="wc-approval-title-<?php echo $order_id; ?>">
+                <?php if ($order_status === 'awaiting-approval'): ?>
+                    ⏳ سفارش شما در حال بررسی است
+                <?php elseif ($order_status === 'approved-payment'): ?>
+                    ✅ سفارش شما تایید شد!
+                <?php else: ?>
+                    وضعیت: <?php echo wc_get_order_status_name($order_status); ?>
+                <?php endif; ?>
+            </h2>
 
-            <?php elseif ($order_status === 'approved-payment'): ?>
-                <h2>✅ سفارش شما تایید شد!</h2>
-                <p>می‌توانید با کلیک روی دکمه زیر پرداخت کنید:</p>
-                <p>
-                    <a href="<?php echo esc_url($payment_url); ?>" class="wc-approval-payment-button">
+            <p id="wc-approval-message-<?php echo $order_id; ?>">
+                <?php if ($order_status === 'awaiting-approval'): ?>
+                    سفارش شما توسط مدیریت در حال بررسی است. پس از تایید، دکمه پرداخت فعال می‌شود.
+                    <span class="wc-approval-spinner"></span>
+                <?php elseif ($order_status === 'approved-payment'): ?>
+                    می‌توانید با کلیک روی دکمه زیر پرداخت کنید:
+                <?php else: ?>
+                    لطفاً از لینک پرداخت زیر استفاده کنید:
+                <?php endif; ?>
+            </p>
+
+            <p id="wc-approval-button-container-<?php echo $order_id; ?>">
+                <?php if ($order_status === 'awaiting-approval'): ?>
+                    <button class="wc-approval-payment-button disabled" disabled>
+                        🔒 در انتظار تایید مدیر
+                    </button>
+                <?php else: ?>
+                    <a href="<?php echo esc_url($payment_url); ?>" class="wc-approval-payment-button" id="wc-payment-link-<?php echo $order_id; ?>">
                         💳 پرداخت سفارش
                     </a>
-                </p>
-                <p><strong>لینک پرداخت:</strong></p>
-                <div class="wc-approval-payment-link">
-                    <?php echo esc_url($payment_url); ?>
-                </div>
+                <?php endif; ?>
+            </p>
 
-            <?php else: ?>
-                <h2>وضعیت: <?php echo wc_get_order_status_name($order_status); ?></h2>
+            <?php if ($order_status === 'approved-payment'): ?>
                 <p><strong>لینک پرداخت:</strong></p>
-                <div class="wc-approval-payment-link">
+                <div class="wc-approval-payment-link" id="wc-payment-url-<?php echo $order_id; ?>">
                     <?php echo esc_url($payment_url); ?>
                 </div>
-                <p>
-                    <a href="<?php echo esc_url($payment_url); ?>" class="wc-approval-payment-button">
-                        💳 پرداخت سفارش
-                    </a>
-                </p>
-                <p><a href="<?php echo wc_get_account_endpoint_url('pending-payments'); ?>" class="button">مشاهده در پنل کاربری</a></p>
             <?php endif; ?>
+
+            <p style="margin-top: 20px; font-size: 13px; color: #666;" id="wc-approval-status-check-<?php echo $order_id; ?>">
+                <?php if ($order_status === 'awaiting-approval'): ?>
+                    ⏱️ وضعیت سفارش به صورت خودکار بررسی می‌شود...
+                <?php endif; ?>
+            </p>
         </div>
+
+        <script>
+        (function() {
+            var orderId = <?php echo $order_id; ?>;
+            var checkInterval = null;
+            var refreshInterval = null;
+            var currentStatus = '<?php echo $order_status; ?>';
+
+            // تابع بررسی وضعیت سفارش از طریق AJAX
+            function checkOrderStatus() {
+                jQuery.ajax({
+                    url: '<?php echo admin_url('admin-ajax.php'); ?>',
+                    type: 'POST',
+                    data: {
+                        action: 'check_approval_status',
+                        order_id: orderId,
+                        nonce: '<?php echo wp_create_nonce('check_approval_status_' . $order_id); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success && response.data.status !== currentStatus) {
+                            currentStatus = response.data.status;
+
+                            // وضعیت تغییر کرده - به‌روزرسانی UI
+                            if (response.data.status === 'approved-payment') {
+                                updateToApproved(response.data.payment_url);
+                            }
+                        }
+                    },
+                    error: function() {
+                        console.log('خطا در بررسی وضعیت سفارش');
+                    }
+                });
+            }
+
+            // تابع به‌روزرسانی UI به حالت تایید شده
+            function updateToApproved(paymentUrl) {
+                var box = jQuery('#wc-approval-box-' + orderId);
+                var title = jQuery('#wc-approval-title-' + orderId);
+                var message = jQuery('#wc-approval-message-' + orderId);
+                var buttonContainer = jQuery('#wc-approval-button-container-' + orderId);
+                var statusCheck = jQuery('#wc-approval-status-check-' + orderId);
+
+                // تغییر کلاس باکس
+                box.removeClass('awaiting').addClass('approved fade-in');
+
+                // تغییر عنوان
+                title.html('✅ سفارش شما تایید شد!');
+
+                // تغییر پیام
+                message.html('می‌توانید با کلیک روی دکمه زیر پرداخت کنید:');
+
+                // تغییر دکمه از غیرفعال به فعال
+                buttonContainer.html('<a href="' + paymentUrl + '" class="wc-approval-payment-button fade-in" id="wc-payment-link-' + orderId + '">💳 پرداخت سفارش</a>');
+
+                // اضافه کردن لینک پرداخت
+                buttonContainer.after('<p><strong>لینک پرداخت:</strong></p><div class="wc-approval-payment-link fade-in" id="wc-payment-url-' + orderId + '">' + paymentUrl + '</div>');
+
+                // حذف پیام بررسی وضعیت
+                statusCheck.html('<span style="color: #28a745;">✓ سفارش تایید شد - می‌توانید پرداخت کنید</span>');
+
+                // توقف چک کردن بیشتر
+                if (checkInterval) {
+                    clearInterval(checkInterval);
+                }
+                if (refreshInterval) {
+                    clearInterval(refreshInterval);
+                }
+
+                // نمایش اعلان
+                if (typeof window.alert !== 'undefined') {
+                    // می‌توانید از notification استفاده کنید
+                    console.log('سفارش شما تایید شد!');
+                }
+            }
+
+            // فقط برای سفارشات در حال انتظار
+            <?php if ($order_status === 'awaiting-approval'): ?>
+                // بررسی وضعیت هر 15 ثانیه با AJAX
+                checkInterval = setInterval(checkOrderStatus, 15000);
+
+                // Refresh کامل صفحه هر 2 دقیقه (به عنوان fallback)
+                refreshInterval = setInterval(function() {
+                    location.reload();
+                }, 120000); // 2 دقیقه = 120000 میلی‌ثانیه
+
+                // بررسی اولیه بعد از 5 ثانیه
+                setTimeout(checkOrderStatus, 5000);
+            <?php endif; ?>
+        })();
+        </script>
         <?php
     }
 
@@ -1130,6 +1285,44 @@ class WC_Admin_Approval_Payment {
         }
 
         return $fields;
+    }
+
+    /**
+     * AJAX handler برای بررسی وضعیت سفارش
+     */
+    public function ajax_check_approval_status() {
+        // بررسی nonce برای امنیت
+        $order_id = isset($_POST['order_id']) ? intval($_POST['order_id']) : 0;
+        $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : '';
+
+        if (!$order_id || !wp_verify_nonce($nonce, 'check_approval_status_' . $order_id)) {
+            wp_send_json_error(array('message' => 'درخواست نامعتبر است'));
+            return;
+        }
+
+        // دریافت سفارش
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            wp_send_json_error(array('message' => 'سفارش یافت نشد'));
+            return;
+        }
+
+        // بررسی اینکه سفارش نیاز به تایید دارد
+        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+        if ($requires_approval !== 'yes') {
+            wp_send_json_error(array('message' => 'این سفارش نیاز به تایید ندارد'));
+            return;
+        }
+
+        // ارسال وضعیت فعلی سفارش
+        $order_status = $order->get_status();
+        $payment_url = $order->get_checkout_payment_url();
+
+        wp_send_json_success(array(
+            'status' => $order_status,
+            'payment_url' => esc_url($payment_url),
+            'status_name' => wc_get_order_status_name($order_status)
+        ));
     }
 
     /**
