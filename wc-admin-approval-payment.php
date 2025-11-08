@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 5.1.0
+ * Version: 5.2.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -177,6 +177,12 @@ class WC_Admin_Approval_Payment {
         // نمایش اجباری لینک پرداخت در صفحه thankyou
         add_action('woocommerce_thankyou', array($this, 'show_payment_link_always'), 5);
 
+        // نمایش لینک پرداخت در صفحه جزئیات سفارش (my-account)
+        add_action('woocommerce_order_details_after_order_table', array($this, 'show_simple_payment_link'), 10, 1);
+
+        // نمایش لینک پرداخت در ایمیل
+        add_action('woocommerce_email_after_order_table', array($this, 'show_simple_payment_link'), 10, 1);
+
         // صفحه انتظار تایید
         add_action('init', array($this, 'register_pending_approval_endpoint'), 20);
         add_filter('query_vars', array($this, 'add_query_vars'));
@@ -226,6 +232,9 @@ class WC_Admin_Approval_Payment {
         // AJAX handlers برای بررسی وضعیت سفارش
         add_action('wp_ajax_check_approval_status', array($this, 'ajax_check_approval_status'));
         add_action('wp_ajax_nopriv_check_approval_status', array($this, 'ajax_check_approval_status'));
+
+        // Shortcode برای نمایش لینک پرداخت
+        add_shortcode('approval_payment_link', array($this, 'shortcode_payment_link'));
     }
 
     /**
@@ -677,6 +686,61 @@ class WC_Admin_Approval_Payment {
             <?php endif; ?>
         })();
         </script>
+        <?php
+    }
+
+    /**
+     * نمایش ساده لینک پرداخت - برای تست و اطمینان از نمایش
+     */
+    public function show_simple_payment_link($order) {
+        // اگر order یک ID است، تبدیل به object کن
+        if (is_numeric($order)) {
+            $order = wc_get_order($order);
+        }
+
+        if (!$order) {
+            return;
+        }
+
+        $order_id = $order->get_id();
+        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+
+        // فقط برای سفارشات نیازمند تایید
+        if ($requires_approval !== 'yes') {
+            return;
+        }
+
+        $order_status = $order->get_status();
+        $payment_url = $order->get_checkout_payment_url();
+
+        ?>
+        <div style="background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center;">
+            <?php if ($order_status === 'awaiting-approval'): ?>
+                <h3 style="color: #856404; margin-top: 0;">⏳ سفارش در حال بررسی</h3>
+                <p style="color: #856404;">سفارش شما توسط مدیر در حال بررسی است.</p>
+            <?php elseif ($order_status === 'approved-payment'): ?>
+                <h3 style="color: #155724; margin-top: 0;">✅ سفارش تایید شد - آماده پرداخت</h3>
+                <p style="margin: 15px 0;">
+                    <a href="<?php echo esc_url($payment_url); ?>" style="display: inline-block; background: #28a745; color: #fff; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                        💳 پرداخت سفارش
+                    </a>
+                </p>
+                <p style="font-size: 12px; color: #666;">لینک پرداخت:</p>
+                <div style="background: #f8f9fa; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;">
+                    <a href="<?php echo esc_url($payment_url); ?>"><?php echo esc_url($payment_url); ?></a>
+                </div>
+            <?php else: ?>
+                <h3 style="color: #333; margin-top: 0;">لینک پرداخت</h3>
+                <p style="margin: 15px 0;">
+                    <a href="<?php echo esc_url($payment_url); ?>" style="display: inline-block; background: #007bff; color: #fff; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                        💳 پرداخت سفارش
+                    </a>
+                </p>
+                <div style="background: #f8f9fa; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px;">
+                    <a href="<?php echo esc_url($payment_url); ?>"><?php echo esc_url($payment_url); ?></a>
+                </div>
+            <?php endif; ?>
+        </div>
         <?php
     }
 
@@ -1323,6 +1387,78 @@ class WC_Admin_Approval_Payment {
             'payment_url' => esc_url($payment_url),
             'status_name' => wc_get_order_status_name($order_status)
         ));
+    }
+
+    /**
+     * Shortcode برای نمایش لینک پرداخت
+     * استفاده: [approval_payment_link order_id="123"]
+     */
+    public function shortcode_payment_link($atts) {
+        $atts = shortcode_atts(array(
+            'order_id' => 0,
+        ), $atts);
+
+        $order_id = intval($atts['order_id']);
+
+        // اگر order_id ندادند، از URL بگیریم
+        if (!$order_id && isset($_GET['order_id'])) {
+            $order_id = intval($_GET['order_id']);
+        }
+
+        // اگر در صفحه order-received هستیم، از URL بگیریم
+        if (!$order_id && is_wc_endpoint_url('order-received')) {
+            global $wp;
+            $order_id = absint($wp->query_vars['order-received']);
+        }
+
+        if (!$order_id) {
+            return '<p style="color: red;">لطفاً شماره سفارش را مشخص کنید. مثال: [approval_payment_link order_id="123"]</p>';
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return '<p style="color: red;">سفارش یافت نشد.</p>';
+        }
+
+        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+        if ($requires_approval !== 'yes') {
+            return ''; // سفارش عادی - چیزی نمایش نده
+        }
+
+        $payment_url = $order->get_checkout_payment_url();
+        $order_status = $order->get_status();
+
+        ob_start();
+        ?>
+        <div style="background: #e7f3ff; border: 3px solid #2196F3; border-radius: 10px; padding: 25px; margin: 20px 0; text-align: center;">
+            <?php if ($order_status === 'awaiting-approval'): ?>
+                <h3 style="color: #0d47a1; margin-top: 0;">⏳ سفارش در انتظار تایید</h3>
+                <p>سفارش شما در حال بررسی است.</p>
+            <?php elseif ($order_status === 'approved-payment'): ?>
+                <h3 style="color: #2e7d32; margin-top: 0;">✅ پرداخت سفارش</h3>
+                <p style="margin: 20px 0;">
+                    <a href="<?php echo esc_url($payment_url); ?>" style="display: inline-block; background: #28a745; color: #fff; padding: 15px 40px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 18px;">
+                        💳 پرداخت کنید
+                    </a>
+                </p>
+                <p style="font-size: 13px; color: #666; margin-top: 15px;">لینک پرداخت:</p>
+                <div style="background: #fff; padding: 12px; border-radius: 5px; word-break: break-all; font-size: 14px; border: 1px solid #ddd;">
+                    <a href="<?php echo esc_url($payment_url); ?>" style="color: #2196F3;"><?php echo esc_url($payment_url); ?></a>
+                </div>
+            <?php else: ?>
+                <h3 style="color: #333; margin-top: 0;">لینک پرداخت سفارش</h3>
+                <p style="margin: 20px 0;">
+                    <a href="<?php echo esc_url($payment_url); ?>" style="display: inline-block; background: #007bff; color: #fff; padding: 15px 40px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 18px;">
+                        💳 پرداخت کنید
+                    </a>
+                </p>
+                <div style="background: #fff; padding: 12px; border-radius: 5px; word-break: break-all; font-size: 14px; border: 1px solid #ddd;">
+                    <a href="<?php echo esc_url($payment_url); ?>"><?php echo esc_url($payment_url); ?></a>
+                </div>
+            <?php endif; ?>
+        </div>
+        <?php
+        return ob_get_clean();
     }
 
     /**
