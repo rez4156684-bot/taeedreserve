@@ -242,17 +242,23 @@ class WC_Admin_Approval_Payment {
     public function add_admin_approval_field() {
         global $post;
 
+        // بررسی وجود post
+        if (!$post || !$post->ID) {
+            return;
+        }
+
         $product = wc_get_product($post->ID);
 
-        // فقط برای محصولات ساده نمایش داده شود
+        // نمایش فیلد برای محصولات ساده
         if ($product && $product->is_type('simple')) {
-            echo '<div class="options_group show_if_simple">';
+            echo '<div class="options_group">';
 
             woocommerce_wp_checkbox(array(
                 'id' => '_require_admin_approval',
-                'label' => __('نیاز به تایید مدیر', 'wc-admin-approval'),
-                'description' => __('فعال کردن این گزینه باعث می‌شود که پرداخت این محصول نیاز به تایید مدیر داشته باشد.', 'wc-admin-approval'),
+                'label' => 'نیاز به تایید مدیر',
+                'description' => 'فعال کردن این گزینه باعث می‌شود که پرداخت این محصول نیاز به تایید مدیر داشته باشد.',
                 'desc_tip' => true,
+                'value' => get_post_meta($post->ID, '_require_admin_approval', true)
             ));
 
             echo '</div>';
