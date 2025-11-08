@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 4.2.0
+ * Version: 4.3.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -25,6 +25,103 @@ if (!in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get
         echo '<div class="error"><p>افزونه "WooCommerce Admin Approval Payment" نیاز به فعال بودن ووکامرس دارد.</p></div>';
     });
     return;
+}
+
+/**
+ * کلاس تبدیل تاریخ شمسی
+ */
+class WC_Persian_Date {
+
+    /**
+     * تبدیل تاریخ میلادی به شمسی
+     */
+    public static function gregorian_to_jalali($gy, $gm, $gd) {
+        $g_d_m = array(0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334);
+
+        if ($gy > 1600) {
+            $jy = 979;
+            $gy -= 1600;
+        } else {
+            $jy = 0;
+            $gy -= 621;
+        }
+
+        if ($gm > 2) {
+            $gy2 = $gy + 1;
+        } else {
+            $gy2 = $gy;
+        }
+
+        $days = (365 * $gy) + ((int)(($gy2 + 3) / 4)) - ((int)(($gy2 + 99) / 100)) + ((int)(($gy2 + 399) / 400)) - 80 + $gd + $g_d_m[$gm - 1];
+        $jy += 33 * ((int)($days / 12053));
+        $days %= 12053;
+        $jy += 4 * ((int)($days / 1461));
+        $days %= 1461;
+
+        if ($days > 365) {
+            $jy += (int)(($days - 1) / 365);
+            $days = ($days - 1) % 365;
+        }
+
+        if ($days < 186) {
+            $jm = 1 + (int)($days / 31);
+            $jd = 1 + ($days % 31);
+        } else {
+            $jm = 7 + (int)(($days - 186) / 30);
+            $jd = 1 + (($days - 186) % 30);
+        }
+
+        return array($jy, $jm, $jd);
+    }
+
+    /**
+     * فرمت کردن تاریخ شمسی
+     */
+    public static function format($format, $timestamp = null) {
+        if ($timestamp === null) {
+            $timestamp = time();
+        }
+
+        // تبدیل به تاریخ میلادی
+        $date_array = getdate($timestamp);
+        $gy = $date_array['year'];
+        $gm = $date_array['mon'];
+        $gd = $date_array['mday'];
+        $hour = $date_array['hours'];
+        $minute = $date_array['minutes'];
+
+        // تبدیل به شمسی
+        list($jy, $jm, $jd) = self::gregorian_to_jalali($gy, $gm, $gd);
+
+        // نام ماه‌های شمسی
+        $month_names = array(
+            '', 'فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور',
+            'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'
+        );
+
+        // جایگزینی فرمت‌ها
+        $formatted = $format;
+        $formatted = str_replace('Y', $jy, $formatted);
+        $formatted = str_replace('m', str_pad($jm, 2, '0', STR_PAD_LEFT), $formatted);
+        $formatted = str_replace('d', str_pad($jd, 2, '0', STR_PAD_LEFT), $formatted);
+        $formatted = str_replace('H', str_pad($hour, 2, '0', STR_PAD_LEFT), $formatted);
+        $formatted = str_replace('i', str_pad($minute, 2, '0', STR_PAD_LEFT), $formatted);
+        $formatted = str_replace('F', $month_names[$jm], $formatted);
+
+        return $formatted;
+    }
+
+    /**
+     * تبدیل تاریخ MySQL datetime به شمسی
+     */
+    public static function mysql_to_jalali($mysql_date, $format = 'Y/m/d H:i') {
+        if (empty($mysql_date)) {
+            return '-';
+        }
+
+        $timestamp = strtotime($mysql_date);
+        return self::format($format, $timestamp);
+    }
 }
 
 /**
@@ -843,7 +940,7 @@ class WC_Admin_Approval_Payment {
                                     ?>
                                 </td>
                                 <td><?php echo wc_price($order->get_total()); ?></td>
-                                <td><?php echo $request_time ? date_i18n('Y/m/d H:i', strtotime($request_time)) : '-'; ?></td>
+                                <td><?php echo $request_time ? WC_Persian_Date::mysql_to_jalali($request_time, 'Y/m/d H:i') : '-'; ?></td>
                                 <td><?php echo $status_label[$order_status] ?? wc_get_order_status_name($order_status); ?></td>
                                 <td>
                                     <?php if ($order_status === 'awaiting-approval'): ?>
@@ -1066,7 +1163,7 @@ class WC_Admin_Approval_Payment {
 
             echo '<tr>';
             echo '<td>#' . $order->get_order_number() . '</td>';
-            echo '<td>' . $order->get_date_created()->date_i18n('Y/m/d') . '</td>';
+            echo '<td>' . WC_Persian_Date::format('Y/m/d', $order->get_date_created()->getTimestamp()) . '</td>';
             echo '<td>' . ($status_labels[$order_status] ?? wc_get_order_status_name($order_status)) . '</td>';
             echo '<td>' . wc_price($order->get_total()) . '</td>';
             echo '<td>';
@@ -1162,7 +1259,7 @@ class WC_Admin_Approval_Payment {
         }
 
         if ($request_time) {
-            echo '<p><strong>زمان درخواست:</strong> ' . date_i18n('Y/m/d H:i', strtotime($request_time)) . '</p>';
+            echo '<p><strong>زمان درخواست:</strong> ' . WC_Persian_Date::mysql_to_jalali($request_time, 'Y/m/d H:i') . '</p>';
         }
 
         if ($order_status === 'approved-payment') {
@@ -1170,7 +1267,7 @@ class WC_Admin_Approval_Payment {
             $approved_by = get_post_meta($order->get_id(), '_approved_by', true);
 
             if ($approval_time) {
-                echo '<p><strong>زمان تایید:</strong> ' . date_i18n('Y/m/d H:i', strtotime($approval_time)) . '</p>';
+                echo '<p><strong>زمان تایید:</strong> ' . WC_Persian_Date::mysql_to_jalali($approval_time, 'Y/m/d H:i') . '</p>';
             }
 
             if ($approved_by) {
