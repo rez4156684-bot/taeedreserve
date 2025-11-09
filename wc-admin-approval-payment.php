@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 5.4.0
+ * Version: 5.5.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -173,6 +173,10 @@ class WC_Admin_Approval_Payment {
 
         // جلوگیری از تغییر خودکار وضعیت
         add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
+
+        // اجازه پرداخت برای وضعیت‌های سفارشی
+        add_filter('woocommerce_valid_order_statuses_for_payment', array($this, 'add_valid_order_statuses_for_payment'), 10, 2);
+        add_filter('woocommerce_order_needs_payment', array($this, 'custom_order_needs_payment'), 10, 3);
 
         // نمایش اجباری لینک پرداخت در صفحه thankyou
         add_action('woocommerce_thankyou', array($this, 'show_payment_link_always'), 5);
@@ -452,6 +456,45 @@ class WC_Admin_Approval_Payment {
         }
 
         return $status;
+    }
+
+    /**
+     * اضافه کردن وضعیت‌های سفارشی به لیست وضعیت‌های مجاز برای پرداخت
+     */
+    public function add_valid_order_statuses_for_payment($statuses, $order) {
+        // اضافه کردن وضعیت‌های سفارشی به لیست مجاز
+        $statuses[] = 'awaiting-approval';
+        $statuses[] = 'approved-payment';
+
+        return $statuses;
+    }
+
+    /**
+     * تعیین اینکه سفارش نیاز به پرداخت دارد یا نه
+     */
+    public function custom_order_needs_payment($needs_payment, $order, $valid_statuses) {
+        if (!$order) {
+            return $needs_payment;
+        }
+
+        $order_id = $order->get_id();
+        $order_status = $order->get_status();
+        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+
+        // اگر سفارش نیاز به تایید دارد
+        if ($requires_approval === 'yes') {
+            // اگر وضعیت approved-payment است، اجازه پرداخت بده
+            if ($order_status === 'approved-payment') {
+                return true;
+            }
+
+            // اگر وضعیت awaiting-approval است، اجازه پرداخت نده
+            if ($order_status === 'awaiting-approval') {
+                return false;
+            }
+        }
+
+        return $needs_payment;
     }
 
     /**
