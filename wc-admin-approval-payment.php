@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 5.2.1
+ * Version: 5.3.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -242,6 +242,12 @@ class WC_Admin_Approval_Payment {
         add_shortcode('approval_pay', array($this, 'shortcode_payment_link'));
         add_shortcode('link_pardakht', array($this, 'shortcode_payment_link'));
         add_shortcode('pardakht', array($this, 'shortcode_payment_link'));
+
+        // Shortcodeهای ساده بدون شرط (الهام از پلاگین حرفه‌ای)
+        add_shortcode('wc_pay_url', array($this, 'simple_pay_url'));
+        add_shortcode('wc_pay_button', array($this, 'simple_pay_button'));
+        add_shortcode('wc_pay_box', array($this, 'simple_pay_box'));
+        add_shortcode('my_orders_pay', array($this, 'my_orders_payment_links'));
     }
 
     /**
@@ -1463,6 +1469,182 @@ class WC_Admin_Approval_Payment {
                     <a href="<?php echo esc_url($payment_url); ?>"><?php echo esc_url($payment_url); ?></a>
                 </div>
             <?php endif; ?>
+        </div>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * Shortcode ساده 1: فقط URL پرداخت (بدون HTML)
+     * استفاده: [wc_pay_url order_id="123"]
+     */
+    public function simple_pay_url($atts) {
+        $atts = shortcode_atts(array('order_id' => 0), $atts);
+        $order_id = intval($atts['order_id']);
+
+        // اگر order_id ندادند، از URL یا context بگیریم
+        if (!$order_id && isset($_GET['order_id'])) {
+            $order_id = intval($_GET['order_id']);
+        }
+        if (!$order_id && is_wc_endpoint_url('order-received')) {
+            global $wp;
+            $order_id = absint($wp->query_vars['order-received']);
+        }
+
+        if (!$order_id) {
+            return '<p style="color:red;">❌ شماره سفارش مشخص نشده (order_id)</p>';
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return '<p style="color:red;">❌ سفارش یافت نشد</p>';
+        }
+
+        return esc_url($order->get_checkout_payment_url());
+    }
+
+    /**
+     * Shortcode ساده 2: دکمه پرداخت
+     * استفاده: [wc_pay_button order_id="123"]
+     */
+    public function simple_pay_button($atts) {
+        $atts = shortcode_atts(array('order_id' => 0, 'text' => 'پرداخت سفارش'), $atts);
+        $order_id = intval($atts['order_id']);
+        $button_text = sanitize_text_field($atts['text']);
+
+        if (!$order_id && isset($_GET['order_id'])) {
+            $order_id = intval($_GET['order_id']);
+        }
+        if (!$order_id && is_wc_endpoint_url('order-received')) {
+            global $wp;
+            $order_id = absint($wp->query_vars['order-received']);
+        }
+
+        if (!$order_id) {
+            return '<p style="color:red;">❌ شماره سفارش مشخص نشده</p>';
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return '<p style="color:red;">❌ سفارش یافت نشد</p>';
+        }
+
+        $payment_url = $order->get_checkout_payment_url();
+
+        return '<a href="' . esc_url($payment_url) . '" class="button wc-pay-button" style="background:#28a745; color:#fff; padding:12px 30px; text-decoration:none; border-radius:5px; display:inline-block; font-weight:bold;">💳 ' . esc_html($button_text) . '</a>';
+    }
+
+    /**
+     * Shortcode ساده 3: باکس کامل با URL + دکمه
+     * استفاده: [wc_pay_box order_id="123"]
+     */
+    public function simple_pay_box($atts) {
+        $atts = shortcode_atts(array('order_id' => 0), $atts);
+        $order_id = intval($atts['order_id']);
+
+        if (!$order_id && isset($_GET['order_id'])) {
+            $order_id = intval($_GET['order_id']);
+        }
+        if (!$order_id && is_wc_endpoint_url('order-received')) {
+            global $wp;
+            $order_id = absint($wp->query_vars['order-received']);
+        }
+
+        if (!$order_id) {
+            return '<div style="background:#fee; border:2px solid #f00; padding:20px; border-radius:8px; text-align:center;"><p style="color:red; font-weight:bold;">❌ شماره سفارش مشخص نشده</p><p>استفاده: [wc_pay_box order_id="123"]</p></div>';
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return '<div style="background:#fee; border:2px solid #f00; padding:20px; border-radius:8px; text-align:center;"><p style="color:red; font-weight:bold;">❌ سفارش #' . $order_id . ' یافت نشد</p></div>';
+        }
+
+        $payment_url = $order->get_checkout_payment_url();
+        $order_number = $order->get_order_number();
+        $order_total = $order->get_total();
+
+        ob_start();
+        ?>
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 15px; padding: 30px; margin: 20px 0; color: #fff; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+            <h2 style="margin: 0 0 15px 0; color: #fff;">💳 پرداخت سفارش #<?php echo esc_html($order_number); ?></h2>
+            <p style="font-size: 24px; margin: 10px 0; color: #ffd700; font-weight: bold;"><?php echo wc_price($order_total); ?></p>
+            <p style="margin: 25px 0;">
+                <a href="<?php echo esc_url($payment_url); ?>" style="background: #28a745; color: #fff; padding: 15px 50px; text-decoration: none; border-radius: 50px; font-size: 18px; font-weight: bold; display: inline-block; box-shadow: 0 5px 15px rgba(0,0,0,0.3); transition: all 0.3s;">
+                    🔒 پرداخت امن
+                </a>
+            </p>
+            <details style="margin-top: 20px; cursor: pointer;">
+                <summary style="font-size: 12px; opacity: 0.8;">نمایش لینک پرداخت</summary>
+                <div style="background: rgba(255,255,255,0.2); padding: 15px; border-radius: 8px; margin-top: 10px; word-break: break-all; font-size: 13px;">
+                    <a href="<?php echo esc_url($payment_url); ?>" style="color: #ffd700;"><?php echo esc_url($payment_url); ?></a>
+                </div>
+            </details>
+        </div>
+        <?php
+        return ob_get_clean();
+    }
+
+    /**
+     * Shortcode ساده 4: لیست تمام سفارشات کاربر با لینک پرداخت
+     * استفاده: [my_orders_pay]
+     */
+    public function my_orders_payment_links($atts) {
+        if (!is_user_logged_in()) {
+            return '<p style="color:red;">برای مشاهده سفارشات باید وارد حساب کاربری خود شوید.</p>';
+        }
+
+        $customer_id = get_current_user_id();
+        $orders = wc_get_orders(array(
+            'customer_id' => $customer_id,
+            'limit' => 20,
+            'orderby' => 'date',
+            'order' => 'DESC',
+        ));
+
+        if (empty($orders)) {
+            return '<p>شما هیچ سفارشی ندارید.</p>';
+        }
+
+        ob_start();
+        ?>
+        <div style="margin: 20px 0;">
+            <h3>سفارشات شما</h3>
+            <?php foreach ($orders as $order):
+                $order_id = $order->get_id();
+                $payment_url = $order->get_checkout_payment_url();
+                $status = $order->get_status();
+                $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+
+                // رنگ بندی بر اساس وضعیت
+                $bg_color = '#f8f9fa';
+                $border_color = '#ddd';
+                if ($requires_approval === 'yes' && $status === 'awaiting-approval') {
+                    $bg_color = '#fff3cd';
+                    $border_color = '#ffc107';
+                } elseif ($requires_approval === 'yes' && $status === 'approved-payment') {
+                    $bg_color = '#d4edda';
+                    $border_color = '#28a745';
+                }
+            ?>
+            <div style="background: <?php echo $bg_color; ?>; border: 2px solid <?php echo $border_color; ?>; border-radius: 8px; padding: 20px; margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                    <div>
+                        <strong>سفارش #<?php echo $order->get_order_number(); ?></strong><br>
+                        <span style="font-size: 13px; color: #666;"><?php echo wc_get_order_status_name($status); ?></span><br>
+                        <span style="font-size: 14px; font-weight: bold;"><?php echo wc_price($order->get_total()); ?></span>
+                    </div>
+                    <div style="text-align: left;">
+                        <?php if ($status === 'pending' || $status === 'on-hold' || $status === 'awaiting-approval' || $status === 'approved-payment'): ?>
+                            <a href="<?php echo esc_url($payment_url); ?>" style="background: #007bff; color: #fff; padding: 10px 25px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                                💳 پرداخت
+                            </a>
+                        <?php else: ?>
+                            <span style="color: #28a745;">✓ پرداخت شده</span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+            <?php endforeach; ?>
         </div>
         <?php
         return ob_get_clean();
