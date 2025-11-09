@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 5.5.0
+ * Version: 5.6.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -383,12 +383,13 @@ class WC_Admin_Approval_Payment {
 
         $product = wc_get_product($post->ID);
 
-        if ($product && $product->is_type('simple')) {
-            echo '<div class="options_group">';
+        // نمایش چک‌باکس برای همه نوع محصولات (نه فقط simple)
+        if ($product) {
+            echo '<div class="options_group show_if_simple show_if_variable show_if_grouped show_if_external">';
 
             woocommerce_wp_checkbox(array(
                 'id' => '_require_admin_approval',
-                'label' => 'نیاز به تایید مدیر',
+                'label' => 'نیاز به تایید مدیر قبل از پرداخت',
                 'description' => 'فعال کردن این گزینه باعث می‌شود که پرداخت این محصول نیاز به تایید مدیر داشته باشد.',
                 'desc_tip' => true,
                 'value' => get_post_meta($post->ID, '_require_admin_approval', true)
@@ -420,10 +421,14 @@ class WC_Admin_Approval_Payment {
 
         foreach ($order->get_items() as $item) {
             $product = $item->get_product();
-            if ($product && $product->is_type('simple')) {
+            if ($product) {
+                // چک کردن برای همه نوع محصولات (نه فقط simple)
                 $require_approval = get_post_meta($product->get_id(), '_require_admin_approval', true);
+
+                // Debug: ذخیره اطلاعات برای بررسی
                 if ($require_approval === 'yes') {
                     $needs_approval = true;
+                    update_post_meta($order_id, '_debug_product_id_needs_approval', $product->get_id());
                     break;
                 }
             }
@@ -434,6 +439,9 @@ class WC_Admin_Approval_Payment {
             update_post_meta($order_id, '_approval_request_time', current_time('mysql'));
 
             $order->update_status('awaiting-approval', 'سفارش در انتظار تایید مدیر است.', true);
+        } else {
+            // Debug: ذخیره که هیچ محصولی نیاز به تایید نداشت
+            update_post_meta($order_id, '_debug_no_approval_needed', 'yes');
         }
     }
 
@@ -511,7 +519,12 @@ class WC_Admin_Approval_Payment {
         }
 
         // فقط اگر سفارش پرداخت نشده باشد
-        if ($order->is_paid()) {
+        $order_status = $order->get_status();
+
+        // لیست وضعیت‌هایی که نباید لینک پرداخت نشان دهیم
+        $paid_statuses = array('completed', 'processing', 'refunded', 'cancelled');
+
+        if (in_array($order_status, $paid_statuses) || $order->is_paid()) {
             return;
         }
 
