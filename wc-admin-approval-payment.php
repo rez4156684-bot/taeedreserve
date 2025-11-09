@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 5.6.0
+ * Version: 6.0.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -12,6 +12,13 @@
  * Requires PHP: 7.4
  * WC requires at least: 5.0
  * WC tested up to: 8.0
+ *
+ * تغییرات نسخه 6.0.0:
+ * - تغییر رویکرد: هدایت به صفحه انتظار بعد از checkout
+ * - نمایش دکمه منتظر تایید مدیر باشید
+ * - بعد از تایید، دکمه تبدیل به "رزرو شما تایید شد" می‌شود
+ * - هدایت به صفحه پرداخت با همه درگاه‌های آزاد
+ * - حذف سیستم لینک پرداخت مستقیم از صفحات thankyou و my-account
  */
 
 // جلوگیری از دسترسی مستقیم
@@ -171,6 +178,9 @@ class WC_Admin_Approval_Payment {
         // مدیریت وضعیت سفارش جدید
         add_action('woocommerce_checkout_update_order_meta', array($this, 'set_order_awaiting_approval'), 10, 2);
 
+        // هدایت به صفحه انتظار بعد از checkout
+        add_filter('woocommerce_get_return_url', array($this, 'redirect_to_pending_approval'), 10, 2);
+
         // جلوگیری از تغییر خودکار وضعیت
         add_filter('woocommerce_payment_complete_order_status', array($this, 'prevent_auto_complete'), 10, 3);
 
@@ -178,16 +188,10 @@ class WC_Admin_Approval_Payment {
         add_filter('woocommerce_valid_order_statuses_for_payment', array($this, 'add_valid_order_statuses_for_payment'), 10, 2);
         add_filter('woocommerce_order_needs_payment', array($this, 'custom_order_needs_payment'), 10, 3);
 
-        // نمایش اجباری لینک پرداخت در صفحه thankyou
-        add_action('woocommerce_thankyou', array($this, 'show_payment_link_always'), 5);
+        // توجه: دیگر نیازی به نمایش لینک پرداخت در صفحات thankyou و my-account نیست
+        // چون کاربر از طریق صفحه pending-approval به صفحه پرداخت هدایت می‌شود
 
-        // نمایش لینک پرداخت بدون شرط (برای همه سفارشات)
-        add_action('woocommerce_thankyou', array($this, 'force_show_payment_link_no_condition'), 1);
-
-        // نمایش لینک پرداخت در صفحه جزئیات سفارش (my-account)
-        add_action('woocommerce_order_details_after_order_table', array($this, 'show_simple_payment_link'), 10, 1);
-
-        // نمایش لینک پرداخت در ایمیل
+        // نمایش لینک پرداخت در ایمیل (فقط برای ایمیل نگه می‌داریم)
         add_action('woocommerce_email_after_order_table', array($this, 'show_simple_payment_link'), 10, 1);
 
         // صفحه انتظار تایید
@@ -443,6 +447,28 @@ class WC_Admin_Approval_Payment {
             // Debug: ذخیره که هیچ محصولی نیاز به تایید نداشت
             update_post_meta($order_id, '_debug_no_approval_needed', 'yes');
         }
+    }
+
+    /**
+     * هدایت به صفحه انتظار تایید بعد از checkout
+     */
+    public function redirect_to_pending_approval($return_url, $order) {
+        if (!$order) {
+            return $return_url;
+        }
+
+        $order_id = $order->get_id();
+        $requires_approval = get_post_meta($order_id, '_requires_admin_approval', true);
+
+        // اگر نیاز به تایید دارد، به صفحه انتظار هدایت کن
+        if ($requires_approval === 'yes') {
+            return add_query_arg(array(
+                'order_id' => $order_id,
+                'key' => $order->get_order_key()
+            ), home_url('/pending-approval/'));
+        }
+
+        return $return_url;
     }
 
     /**
@@ -1273,31 +1299,31 @@ class WC_Admin_Approval_Payment {
 
         <div class="approval-container">
             <?php if ($order_status === 'awaiting-approval'): ?>
-                <div class="approval-status pending">
+                <div class="approval-status pending" id="approval-status-box">
                     <div class="icon">⏳</div>
-                    <h2>در حال بررسی سفارش</h2>
+                    <h2 id="approval-title">منتظر تایید مدیر باشید</h2>
                     <p>سفارش شما با موفقیت ثبت شد و در حال بررسی توسط مدیریت است.</p>
                     <p>لطفاً صبور باشید، پس از تایید مدیر می‌توانید پرداخت را انجام دهید.</p>
                     <div class="spinner"></div>
                     <p style="font-size: 14px; color: #666;">این صفحه به صورت خودکار بروزرسانی می‌شود...</p>
+
+                    <div style="text-align: center; margin: 30px 0;">
+                        <button class="payment-button" style="background: #6c757d; cursor: not-allowed;" disabled id="approval-button">
+                            🔒 در انتظار تایید مدیر
+                        </button>
+                    </div>
                 </div>
             <?php elseif ($order_status === 'approved-payment'): ?>
-                <div class="approval-status approved">
+                <div class="approval-status approved" id="approval-status-box">
                     <div class="icon">✅</div>
-                    <h2>سفارش شما تایید شد!</h2>
+                    <h2 id="approval-title">رزرو شما تایید شد!</h2>
                     <p>سفارش شما توسط مدیریت تایید شد.</p>
                     <p>اکنون می‌توانید نسبت به پرداخت اقدام کنید.</p>
 
                     <div style="text-align: center; margin: 30px 0;">
-                        <a href="<?php echo esc_url($order->get_checkout_payment_url()); ?>" class="payment-button">
-                            💳 پرداخت سفارش
+                        <a href="<?php echo esc_url($order->get_checkout_payment_url()); ?>" class="payment-button" id="approval-button">
+                            💳 ادامه برای پرداخت
                         </a>
-                    </div>
-
-                    <div class="payment-link-box">
-                        <p><strong>🔗 لینک پرداخت شما:</strong></p>
-                        <p style="font-size: 13px;">می‌توانید این لینک را ذخیره کنید و در هر زمان از طریق آن پرداخت نمایید.</p>
-                        <span class="payment-link-url"><?php echo esc_url($order->get_checkout_payment_url()); ?></span>
                     </div>
                 </div>
             <?php else: ?>
@@ -1305,16 +1331,6 @@ class WC_Admin_Approval_Payment {
                 <div class="approval-status">
                     <h2>وضعیت سفارش: <?php echo wc_get_order_status_name($order_status); ?></h2>
                     <p>شماره سفارش: #<?php echo $order->get_order_number(); ?></p>
-
-                    <div class="payment-link-box">
-                        <p><strong>🔗 لینک پرداخت:</strong></p>
-                        <span class="payment-link-url"><?php echo esc_url($order->get_checkout_payment_url()); ?></span>
-                        <p style="margin-top: 15px;">
-                            <a href="<?php echo esc_url($order->get_checkout_payment_url()); ?>" class="payment-button">
-                                💳 پرداخت سفارش
-                            </a>
-                        </p>
-                    </div>
 
                     <p style="margin-top: 20px;">
                         <a href="<?php echo wc_get_account_endpoint_url('pending-payments'); ?>" class="button">
@@ -1366,6 +1382,7 @@ class WC_Admin_Approval_Payment {
 
         <?php if ($order_status === 'awaiting-approval'): ?>
         <script>
+            // بررسی وضعیت سفارش به صورت دوره‌ای
             setInterval(function() {
                 var xhr = new XMLHttpRequest();
                 xhr.open('POST', '<?php echo admin_url('admin-ajax.php'); ?>', true);
@@ -1373,8 +1390,42 @@ class WC_Admin_Approval_Payment {
                 xhr.onload = function() {
                     if (xhr.status === 200) {
                         var response = JSON.parse(xhr.responseText);
-                        if (response.success && response.data.status !== 'awaiting-approval') {
-                            location.reload();
+                        if (response.success && response.data.status === 'approved-payment') {
+                            // سفارش تایید شد - به‌روزرسانی UI
+                            var statusBox = document.getElementById('approval-status-box');
+                            var title = document.getElementById('approval-title');
+                            var button = document.getElementById('approval-button');
+
+                            if (statusBox && title && button) {
+                                // تغییر کلاس
+                                statusBox.className = 'approval-status approved';
+
+                                // تغییر آیکون
+                                var icon = statusBox.querySelector('.icon');
+                                if (icon) icon.textContent = '✅';
+
+                                // تغییر عنوان
+                                title.textContent = 'رزرو شما تایید شد!';
+
+                                // حذف spinner
+                                var spinner = statusBox.querySelector('.spinner');
+                                if (spinner) spinner.remove();
+
+                                // تغییر پیام‌ها
+                                var paragraphs = statusBox.querySelectorAll('p');
+                                if (paragraphs[0]) paragraphs[0].textContent = 'سفارش شما توسط مدیریت تایید شد.';
+                                if (paragraphs[1]) paragraphs[1].textContent = 'اکنون می‌توانید نسبت به پرداخت اقدام کنید.';
+                                if (paragraphs[2]) paragraphs[2].remove();
+
+                                // فعال کردن دکمه و تبدیل به لینک
+                                var paymentUrl = '<?php echo esc_js($order->get_checkout_payment_url()); ?>';
+                                var newButton = document.createElement('a');
+                                newButton.href = paymentUrl;
+                                newButton.className = 'payment-button';
+                                newButton.id = 'approval-button';
+                                newButton.textContent = '💳 ادامه برای پرداخت';
+                                button.parentNode.replaceChild(newButton, button);
+                            }
                         }
                     }
                 };
@@ -2250,15 +2301,19 @@ class WC_Admin_Approval_Payment {
             echo '<div class="approval-card-footer">';
             echo '<span class="approval-card-total">جمع کل: ' . wc_price($order->get_total()) . '</span>';
 
-            // همیشه لینک پرداخت نمایش بده
+            // لینک به صفحه انتظار یا پرداخت
             $payment_url = $order->get_checkout_payment_url();
+            $pending_url = add_query_arg(array(
+                'order_id' => $order_id,
+                'key' => $order->get_order_key()
+            ), home_url('/pending-approval/'));
             echo '<div>';
 
             if ($order_status === 'approved-payment') {
                 echo '<a href="' . esc_url($payment_url) . '" class="button payment-button">💳 پرداخت سفارش</a>';
             } elseif ($order_status === 'awaiting-approval') {
                 echo '<span style="color: #666; font-size: 14px; display: block; margin-bottom: 10px;"><span class="approval-spinner"></span> در حال بررسی...</span>';
-                echo '<a href="' . esc_url($payment_url) . '" class="button" style="font-size: 12px; padding: 6px 12px;">مشاهده لینک پرداخت</a>';
+                echo '<a href="' . esc_url($pending_url) . '" class="button" style="font-size: 12px; padding: 6px 12px;">مشاهده وضعیت سفارش</a>';
             } else {
                 echo '<span style="color: #999; display: block; margin-bottom: 10px;">سفارش رد شده</span>';
             }
