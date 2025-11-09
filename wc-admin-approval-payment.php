@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 5.6.0
+ * Version: 5.8.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -740,7 +740,7 @@ class WC_Admin_Approval_Payment {
                         if (response.success && response.data.status !== currentStatus) {
                             currentStatus = response.data.status;
 
-                            // وضعیت تغییر کرده - redirect به صفحه پرداخت
+                            // وضعیت تغییر کرده - reload صفحه برای نمایش لینک پرداخت
                             if (response.data.status === 'approved-payment') {
                                 // متوقف کردن تمام interval ها
                                 if (checkInterval) {
@@ -749,8 +749,8 @@ class WC_Admin_Approval_Payment {
                                 if (refreshInterval) {
                                     clearInterval(refreshInterval);
                                 }
-                                // Redirect به صفحه پرداخت
-                                window.location.href = response.data.payment_url;
+                                // Reload صفحه برای نمایش لینک پرداخت (بدون redirect خودکار)
+                                location.reload();
                             }
                         }
                     },
@@ -1010,11 +1010,11 @@ class WC_Admin_Approval_Payment {
                             if (xhr.status === 200) {
                                 var response = JSON.parse(xhr.responseText);
                                 if (response.success && response.data.status === 'approved-payment') {
-                                    // سفارش تایید شد - redirect به صفحه پرداخت
+                                    // سفارش تایید شد - reload صفحه برای نمایش لینک پرداخت
                                     if (checkInterval) {
                                         clearInterval(checkInterval);
                                     }
-                                    window.location.href = response.data.payment_url;
+                                    location.reload();
                                 } else if (response.success && response.data.status !== 'awaiting-approval') {
                                     // وضعیت تغییر کرده - reload صفحه
                                     location.reload();
