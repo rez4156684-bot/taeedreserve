@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Admin Approval Payment
  * Plugin URI: https://example.com
  * Description: افزونه تایید مدیر قبل از پرداخت برای محصولات ساده ووکامرس با وضعیت‌های سفارشی
- * Version: 5.3.0
+ * Version: 5.4.0
  * Author: Your Name
  * Author URI: https://example.com
  * Text Domain: wc-admin-approval
@@ -176,6 +176,9 @@ class WC_Admin_Approval_Payment {
 
         // نمایش اجباری لینک پرداخت در صفحه thankyou
         add_action('woocommerce_thankyou', array($this, 'show_payment_link_always'), 5);
+
+        // نمایش لینک پرداخت بدون شرط (برای همه سفارشات)
+        add_action('woocommerce_thankyou', array($this, 'force_show_payment_link_no_condition'), 1);
 
         // نمایش لینک پرداخت در صفحه جزئیات سفارش (my-account)
         add_action('woocommerce_order_details_after_order_table', array($this, 'show_simple_payment_link'), 10, 1);
@@ -449,6 +452,56 @@ class WC_Admin_Approval_Payment {
         }
 
         return $status;
+    }
+
+    /**
+     * نمایش اجباری لینک پرداخت بدون هیچ شرطی - برای همه سفارشات
+     */
+    public function force_show_payment_link_no_condition($order_id) {
+        if (!$order_id) {
+            return;
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
+
+        // فقط اگر سفارش پرداخت نشده باشد
+        if ($order->is_paid()) {
+            return;
+        }
+
+        $payment_url = $order->get_checkout_payment_url();
+        $order_number = $order->get_order_number();
+        $order_total = $order->get_total();
+
+        ?>
+        <div id="wc-force-payment-box" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 15px; padding: 35px; margin: 30px 0; color: #fff; text-align: center; box-shadow: 0 15px 35px rgba(102, 126, 234, 0.4);">
+            <h2 style="margin: 0 0 20px 0; color: #fff; font-size: 28px;">💳 پرداخت سفارش</h2>
+            <div style="background: rgba(255,255,255,0.15); padding: 20px; border-radius: 10px; margin: 20px 0;">
+                <p style="margin: 5px 0; font-size: 16px; opacity: 0.9;">شماره سفارش: <strong>#<?php echo esc_html($order_number); ?></strong></p>
+                <p style="margin: 15px 0; font-size: 32px; color: #ffd700; font-weight: bold;"><?php echo wc_price($order_total); ?></p>
+            </div>
+            <p style="margin: 30px 0;">
+                <a href="<?php echo esc_url($payment_url); ?>" style="background: #28a745; color: #fff; padding: 18px 60px; text-decoration: none; border-radius: 50px; font-size: 20px; font-weight: bold; display: inline-block; box-shadow: 0 8px 20px rgba(40, 167, 69, 0.5); transition: all 0.3s; border: 3px solid #fff;">
+                    🔒 پرداخت امن
+                </a>
+            </p>
+            <details style="margin-top: 25px; cursor: pointer; opacity: 0.9;">
+                <summary style="font-size: 14px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">📋 نمایش لینک پرداخت</summary>
+                <div style="background: rgba(255,255,255,0.25); padding: 20px; border-radius: 10px; margin-top: 15px; word-break: break-all; font-size: 14px; font-family: monospace;">
+                    <a href="<?php echo esc_url($payment_url); ?>" style="color: #ffd700; text-decoration: underline;"><?php echo esc_url($payment_url); ?></a>
+                </div>
+            </details>
+        </div>
+        <style>
+            #wc-force-payment-box a:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 12px 30px rgba(40, 167, 69, 0.6);
+            }
+        </style>
+        <?php
     }
 
     /**
