@@ -740,9 +740,17 @@ class WC_Admin_Approval_Payment {
                         if (response.success && response.data.status !== currentStatus) {
                             currentStatus = response.data.status;
 
-                            // وضعیت تغییر کرده - به‌روزرسانی UI
+                            // وضعیت تغییر کرده - redirect به صفحه پرداخت
                             if (response.data.status === 'approved-payment') {
-                                updateToApproved(response.data.payment_url);
+                                // متوقف کردن تمام interval ها
+                                if (checkInterval) {
+                                    clearInterval(checkInterval);
+                                }
+                                if (refreshInterval) {
+                                    clearInterval(refreshInterval);
+                                }
+                                // Redirect به صفحه پرداخت
+                                window.location.href = response.data.payment_url;
                             }
                         }
                     },
@@ -750,47 +758,6 @@ class WC_Admin_Approval_Payment {
                         console.log('خطا در بررسی وضعیت سفارش');
                     }
                 });
-            }
-
-            // تابع به‌روزرسانی UI به حالت تایید شده
-            function updateToApproved(paymentUrl) {
-                var box = jQuery('#wc-approval-box-' + orderId);
-                var title = jQuery('#wc-approval-title-' + orderId);
-                var message = jQuery('#wc-approval-message-' + orderId);
-                var buttonContainer = jQuery('#wc-approval-button-container-' + orderId);
-                var statusCheck = jQuery('#wc-approval-status-check-' + orderId);
-
-                // تغییر کلاس باکس
-                box.removeClass('awaiting').addClass('approved fade-in');
-
-                // تغییر عنوان
-                title.html('✅ سفارش شما تایید شد!');
-
-                // تغییر پیام
-                message.html('می‌توانید با کلیک روی دکمه زیر پرداخت کنید:');
-
-                // تغییر دکمه از غیرفعال به فعال
-                buttonContainer.html('<a href="' + paymentUrl + '" class="wc-approval-payment-button fade-in" id="wc-payment-link-' + orderId + '">💳 پرداخت سفارش</a>');
-
-                // اضافه کردن لینک پرداخت
-                buttonContainer.after('<p><strong>لینک پرداخت:</strong></p><div class="wc-approval-payment-link fade-in" id="wc-payment-url-' + orderId + '">' + paymentUrl + '</div>');
-
-                // حذف پیام بررسی وضعیت
-                statusCheck.html('<span style="color: #28a745;">✓ سفارش تایید شد - می‌توانید پرداخت کنید</span>');
-
-                // توقف چک کردن بیشتر
-                if (checkInterval) {
-                    clearInterval(checkInterval);
-                }
-                if (refreshInterval) {
-                    clearInterval(refreshInterval);
-                }
-
-                // نمایش اعلان
-                if (typeof window.alert !== 'undefined') {
-                    // می‌توانید از notification استفاده کنید
-                    console.log('سفارش شما تایید شد!');
-                }
             }
 
             // فقط برای سفارشات در حال انتظار
@@ -1030,10 +997,39 @@ class WC_Admin_Approval_Payment {
             </div>
 
             <script>
-                // Auto-refresh هر 5 ثانیه
-                setTimeout(function() {
-                    location.reload();
-                }, 5000);
+                (function() {
+                    var orderId = <?php echo $order_id; ?>;
+                    var checkInterval = null;
+
+                    // تابع بررسی وضعیت سفارش از طریق AJAX
+                    function checkOrderStatus() {
+                        var xhr = new XMLHttpRequest();
+                        xhr.open('POST', '<?php echo admin_url('admin-ajax.php'); ?>', true);
+                        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                        xhr.onload = function() {
+                            if (xhr.status === 200) {
+                                var response = JSON.parse(xhr.responseText);
+                                if (response.success && response.data.status === 'approved-payment') {
+                                    // سفارش تایید شد - redirect به صفحه پرداخت
+                                    if (checkInterval) {
+                                        clearInterval(checkInterval);
+                                    }
+                                    window.location.href = response.data.payment_url;
+                                } else if (response.success && response.data.status !== 'awaiting-approval') {
+                                    // وضعیت تغییر کرده - reload صفحه
+                                    location.reload();
+                                }
+                            }
+                        };
+                        xhr.send('action=check_payment_approval&order_id=' + orderId);
+                    }
+
+                    // بررسی وضعیت هر 5 ثانیه
+                    checkInterval = setInterval(checkOrderStatus, 5000);
+
+                    // بررسی اولیه بعد از 2 ثانیه
+                    setTimeout(checkOrderStatus, 2000);
+                })();
             </script>
 
         <?php elseif ($order_status === 'approved-payment'): ?>
@@ -2276,13 +2272,56 @@ class WC_Admin_Approval_Payment {
         if ($has_awaiting) {
             ?>
             <script>
-                // بارگذاری مجدد صفحه هر 10 ثانیه برای بررسی تایید
-                setInterval(function() {
-                    location.reload();
-                }, 10000);
+                (function() {
+                    var checkInterval = null;
+
+                    // تابع بررسی وضعیت سفارشات
+                    function checkOrdersStatus() {
+                        // بررسی تمام سفارشات در انتظار
+                        var awaitingOrders = document.querySelectorAll('.approval-card.awaiting');
+                        if (awaitingOrders.length === 0) {
+                            if (checkInterval) {
+                                clearInterval(checkInterval);
+                            }
+                            return;
+                        }
+
+                        awaitingOrders.forEach(function(card) {
+                            var orderNumber = card.querySelector('.approval-card-order-number');
+                            if (!orderNumber) return;
+
+                            // استخراج شماره سفارش (حذف # و فاصله‌ها)
+                            var orderIdText = orderNumber.textContent.replace(/[^\d]/g, '');
+                            if (!orderIdText) return;
+
+                            var xhr = new XMLHttpRequest();
+                            xhr.open('POST', '<?php echo admin_url('admin-ajax.php'); ?>', true);
+                            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                            xhr.onload = function() {
+                                if (xhr.status === 200) {
+                                    var response = JSON.parse(xhr.responseText);
+                                    if (response.success && response.data.status === 'approved-payment') {
+                                        // یکی از سفارشات تایید شد - reload صفحه
+                                        if (checkInterval) {
+                                            clearInterval(checkInterval);
+                                        }
+                                        location.reload();
+                                    }
+                                }
+                            };
+                            xhr.send('action=check_payment_approval&order_id=' + orderIdText);
+                        });
+                    }
+
+                    // بررسی وضعیت هر 10 ثانیه
+                    checkInterval = setInterval(checkOrdersStatus, 10000);
+
+                    // بررسی اولیه بعد از 3 ثانیه
+                    setTimeout(checkOrdersStatus, 3000);
+                })();
             </script>
             <div class="woocommerce-message woocommerce-message--info" style="margin-top: 20px;">
-                <p>این صفحه هر 10 ثانیه به صورت خودکار بروزرسانی می‌شود تا وضعیت سفارش شما بررسی شود.</p>
+                <p>وضعیت سفارشات شما به صورت خودکار بررسی می‌شود. در صورت تایید، صفحه به‌روزرسانی خواهد شد.</p>
             </div>
             <?php
         }
@@ -2439,9 +2478,11 @@ class WC_Admin_Approval_Payment {
 
         $order = wc_get_order($order_id);
         $order_status = $order->get_status();
+        $payment_url = $order->get_checkout_payment_url();
 
         wp_send_json_success(array(
             'status' => $order_status,
+            'payment_url' => esc_url($payment_url),
         ));
     }
 }
